@@ -64,7 +64,11 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
           base = parsed;
         }
       }
-      if (!base.length) base = FALLBACK_PRODUCTS;
+      if (!base.length) {
+        // Se o Supabase está configurado, aguarda os dados reais da nuvem sem exibir o catálogo antigo
+        if (isSupabaseConfigured()) return custom.filter(p => !deleted.includes(p.id));
+        base = FALLBACK_PRODUCTS;
+      }
 
       const map = new Map<string, Product>();
       // 1. Produtos customizados criados pelo usuário têm prioridade e nunca somem
@@ -82,7 +86,7 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
       return Array.from(map.values());
     } catch (_) {}
-    return FALLBACK_PRODUCTS;
+    return isSupabaseConfigured() ? [] : FALLBACK_PRODUCTS;
   });
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +114,7 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // 1. Prioridade Máxima: Supabase (Nuvem Permanente)
       if (isSupabaseConfigured()) {
         const supaProducts = await fetchSupabaseProducts();
-        if (supaProducts && supaProducts.length > 0) {
+        if (supaProducts !== null) {
           persistProducts(supaProducts);
           setError(null);
           setLoading(false);

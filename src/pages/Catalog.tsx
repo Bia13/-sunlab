@@ -6,7 +6,7 @@ import { useProducts } from '@/context/ProductContext';
 import { ProductCard } from '@/components/ProductCard';
 
 export const Catalog: React.FC = () => {
-  const { products } = useProducts();
+  const { products, loading } = useProducts();
   const [searchParams, setSearchParams] = useSearchParams();
   const categoryParam = searchParams.get('cat') || 'all';
 
@@ -212,7 +212,20 @@ export const Catalog: React.FC = () => {
       </div>
 
       {/* Product Results Grid (2-columns on mobile, up to 4 on desktop) */}
-      {filteredProducts.length > 0 ? (
+      {loading && products.length === 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="rounded-2xl bg-white border border-zinc-200 overflow-hidden animate-pulse">
+              <div className="aspect-square sm:aspect-4/3 bg-zinc-200/70" />
+              <div className="p-4 space-y-3">
+                <div className="h-3 w-20 bg-zinc-200 rounded" />
+                <div className="h-4 w-3/4 bg-zinc-200 rounded" />
+                <div className="h-5 w-1/2 bg-zinc-200 rounded" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : filteredProducts.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
           {filteredProducts.map(product => (
             <ProductCard key={product.id} product={product} />
