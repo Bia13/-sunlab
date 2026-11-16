@@ -10,9 +10,7 @@ import {
   Clock,
   Printer,
   Package,
-  UserCheck,
   LogIn,
-  UserPlus,
   Loader2
 } from 'lucide-react';
 import { useCart, type CartItem } from '@/context/CartContext';
@@ -208,17 +206,19 @@ export const CheckoutModal: React.FC = () => {
 
   const isProfileComplete = isAdmin
     ? true
-    : Boolean(
-        formData.name.trim() &&
-        formData.phone.trim() &&
-        formData.cpf.trim() &&
-        isValidCPF(formData.cpf) &&
-        formData.cep.trim() &&
-        formData.street.trim() &&
-        formData.number.trim() &&
-        formData.city.trim() &&
-        formData.state.trim()
-      );
+    : !user
+      ? Boolean(formData.name.trim())
+      : Boolean(
+          formData.name.trim() &&
+          formData.phone.trim() &&
+          formData.cpf.trim() &&
+          isValidCPF(formData.cpf) &&
+          formData.cep.trim() &&
+          formData.street.trim() &&
+          formData.number.trim() &&
+          formData.city.trim() &&
+          formData.state.trim()
+        );
 
   // Gerador da mensagem completa e detalhada para o WhatsApp
   const generateWhatsAppMessage = (order: NonNullable<typeof completedOrderData>) => {
@@ -226,10 +226,14 @@ export const CheckoutModal: React.FC = () => {
       .map(
         (it, idx) =>
           `*${idx + 1}. ${it.name}*\n` +
-          `   🎨 Cor: ${it.color || 'Padrão'}${it.size ? ` | Tam: ${it.size}` : ''}\n` +
+          `   🎨 Cor: ${it.color || 'Padrão'}${it.size && it.size !== 'Padrão' ? ` | Tam: ${it.size}` : ''}\n` +
           `   🔢 Qtd: ${it.quantity} un. | Valor: R$ ${(it.quantity * it.unitPrice).toFixed(2).replace('.', ',')}`
       )
       .join('\n\n');
+
+    const emailLine = order.customerEmail && order.customerEmail !== 'visitante@sunlab.com.br'
+      ? `• *E-mail:* ${order.customerEmail}\n`
+      : '';
 
     return (
       `🌊 *NOVO PEDIDO REALIZADO — SUNLAB 3D*\n` +
@@ -238,9 +242,9 @@ export const CheckoutModal: React.FC = () => {
       `📅 *DATA:* ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}\n\n` +
       `👤 *DADOS DO CLIENTE:*\n` +
       `• *Nome:* ${order.customerName}\n` +
-      `• *E-mail:* ${order.customerEmail}\n` +
+      emailLine +
       `• *Telefone/WhatsApp:* ${order.customerPhone || 'Não informado'}\n\n` +
-      `📍 *ENDEREÇO CADASTRADO:*\n` +
+      `📍 *ENTREGA / ENDEREÇO:*\n` +
       `• ${order.shippingAddress}\n\n` +
       `📦 *PRODUTOS ESCOLHIDOS:*\n` +
       `${itemsText}\n\n` +
@@ -272,13 +276,13 @@ export const CheckoutModal: React.FC = () => {
     const payableTotal = total;
 
     const finalCustomerName = formData.name.trim() || (isAdmin ? 'Venda Direta (Admin)' : 'Cliente');
-    const finalCustomerEmail = formData.email.trim() || user?.email || 'admin@sunlab.com.br';
+    const finalCustomerEmail = formData.email.trim() || user?.email || (isAdmin ? 'admin@sunlab.com.br' : 'visitante@sunlab.com.br');
     const finalCustomerPhone = formData.phone.trim();
 
     const hasAddress = Boolean(formData.street.trim() || formData.city.trim() || formData.cep.trim());
     const shippingAddr = hasAddress
       ? `${formData.street || 'Não informado'}, nº ${formData.number || 'S/N'}${formData.complement ? ' (' + formData.complement + ')' : ''}${formData.neighborhood ? ', ' + formData.neighborhood : ''} — ${formData.city || ''}/${formData.state || ''}${formData.cep ? ` (CEP: ${formData.cep})` : ''}`
-      : 'Venda Direta / Sem endereço informado';
+      : (isAdmin ? 'Venda Direta / Sem endereço informado' : 'A combinar via WhatsApp');
 
     // Sincronizar criação do pedido com a API de pedidos (Vercel e Express)
     try {
@@ -407,80 +411,44 @@ export const CheckoutModal: React.FC = () => {
 
         {/* Modal Content */}
         <div className="p-4 sm:p-6 overflow-y-auto">
-          
-          {/* CASO NÃO ESTEJA LOGADO: EXIGIR LOGIN OU CADASTRO PARA FINALIZAR COMPRA */}
-          {!user ? (
-            <div className="py-6 px-2 sm:px-4 text-center space-y-5 animate-in fade-in">
-              <div className="w-16 h-16 rounded-full bg-blue-50 border border-blue-200 text-blue-600 mx-auto flex items-center justify-center shadow-xs">
-                <UserCheck className="w-8 h-8" />
-              </div>
-              <div className="space-y-1.5 max-w-sm mx-auto">
-                <h3 className="text-xl font-bold text-zinc-900 font-display">
-                  Identifique-se para Continuar
-                </h3>
-                <p className="text-xs text-zinc-600 leading-relaxed">
-                  Para acompanhar seu pedido e salvar seus dados com segurança, faça login ou crie sua conta antes de finalizar.
-                </p>
-              </div>
-
-              {/* Resumo rápido do carrinho */}
-              <div className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 max-w-sm mx-auto flex items-center justify-between text-xs">
-                <span className="text-zinc-600 font-medium">Total do seu carrinho ({cart.length} {cart.length === 1 ? 'item' : 'itens'}):</span>
-                <strong className="text-blue-900 font-bold text-sm">R$ {total.toFixed(2).replace('.', ',')}</strong>
-              </div>
-
-              <div className="space-y-2.5 max-w-sm mx-auto pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeCheckout();
-                    navigate('/login?redirect=checkout');
-                  }}
-                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-all shadow-md cursor-pointer"
-                >
-                  <LogIn className="w-4 h-4" />
-                  <span>Entrar com Minha Conta</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeCheckout();
-                    navigate('/login?tab=register&redirect=checkout');
-                  }}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border border-zinc-300 font-semibold text-xs transition-colors cursor-pointer"
-                >
-                  <UserPlus className="w-4 h-4 text-zinc-600" />
-                  <span>Criar Nova Conta SunLab</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={closeCheckout}
-                  className="text-xs text-zinc-500 hover:text-zinc-800 pt-2 cursor-pointer transition-colors block mx-auto"
-                >
-                  Voltar ao Carrinho
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
+          <>
               {/* STEP 1: Formulário e Pedido Direto ao WhatsApp */}
               {step === 'form' && (
-                <form onSubmit={handleCompleteOrder} noValidate={isAdmin} className="space-y-4">
+                <form onSubmit={handleCompleteOrder} noValidate={isAdmin || !user} className="space-y-4">
                   {/* Banner de Identificação do Usuário */}
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">
-                        {user.name.charAt(0).toUpperCase()}
+                  {user ? (
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">
+                          {user.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-blue-950 block">{user.name}</span>
+                          <span className="text-blue-700 text-[11px]">{user.email}</span>
+                        </div>
                       </div>
-                      <div>
-                        <span className="font-semibold text-blue-950 block">{user.name}</span>
-                        <span className="text-blue-700 text-[11px]">{user.email}</span>
-                      </div>
+                      <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-blue-200 text-blue-800 font-medium">
+                        {isAdmin ? 'Admin (Sem Validação)' : 'Conta Conectada'}
+                      </span>
                     </div>
-                    <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-blue-200 text-blue-800 font-medium">
-                      {isAdmin ? 'Admin (Sem Validação)' : 'Conta Conectada'}
-                    </span>
-                  </div>
+                  ) : (
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/60 border border-blue-200 text-xs gap-2">
+                      <span className="text-blue-950 font-medium">
+                        Compra rápida — informe apenas o seu nome para concluir.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          closeCheckout();
+                          navigate('/login?redirect=checkout');
+                        }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 shrink-0 cursor-pointer underline underline-offset-2"
+                      >
+                        <LogIn className="w-3 h-3" />
+                        <span>Entrar</span>
+                      </button>
+                    </div>
+                  )}
 
                   {isAdmin && (
                     <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
@@ -491,25 +459,25 @@ export const CheckoutModal: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        Nome Completo do Destinatário *
+                        {user ? 'Nome Completo do Destinatário *' : 'Seu Nome *'}
                       </label>
                       <input
                         type="text"
                         required
                         value={formData.name}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                        placeholder="Nome e Sobrenome"
+                        placeholder="Digite seu nome"
                         className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
                       />
                     </div>
 
-                    <div>
+                    <div className={user ? '' : 'sm:col-span-2'}>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        WhatsApp / Celular com DDD *
+                        {user ? 'WhatsApp / Celular com DDD *' : 'WhatsApp / Telefone (opcional)'}
                       </label>
                       <input
                         type="tel"
-                        required
+                        required={Boolean(user)}
                         value={formData.phone}
                         onChange={(e) => handlePhoneChange(e.target.value)}
                         placeholder="(13) 99999-9999"
@@ -517,29 +485,32 @@ export const CheckoutModal: React.FC = () => {
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        CPF do Titular *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={formData.cpf}
-                        onChange={(e) => handleCpfChange(e.target.value)}
-                        placeholder="000.000.000-00"
-                        className={`w-full bg-white border rounded-xl px-3 py-2 text-xs text-zinc-900 focus:ring-1 outline-none font-mono ${
-                          formData.cpf && !isValidCPF(formData.cpf)
-                            ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                            : 'border-zinc-300 focus:border-blue-500 focus:ring-blue-500'
-                        }`}
-                      />
-                      {formData.cpf && !isValidCPF(formData.cpf) && (
-                        <span className="text-[10px] text-red-500 mt-0.5 block">CPF inválido</span>
-                      )}
-                    </div>
+                    {user && (
+                      <div>
+                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                          CPF do Titular *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={formData.cpf}
+                          onChange={(e) => handleCpfChange(e.target.value)}
+                          placeholder="000.000.000-00"
+                          className={`w-full bg-white border rounded-xl px-3 py-2 text-xs text-zinc-900 focus:ring-1 outline-none font-mono ${
+                            formData.cpf && !isValidCPF(formData.cpf)
+                              ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                              : 'border-zinc-300 focus:border-blue-500 focus:ring-blue-500'
+                          }`}
+                        />
+                        {formData.cpf && !isValidCPF(formData.cpf) && (
+                          <span className="text-[10px] text-red-500 mt-0.5 block">CPF inválido</span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Endereço Cadastrado */}
+                  {/* Endereço Cadastrado (apenas quando logado) */}
+                  {user && (
                   <div className="pt-2 border-t border-zinc-100 space-y-3">
                     <span className="text-xs font-bold text-zinc-900 block">
                       Endereço Cadastrado
@@ -649,6 +620,7 @@ export const CheckoutModal: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                  )}
 
                   {/* Order Mini Summary */}
                   <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 flex items-center justify-between text-xs text-zinc-700">
@@ -728,16 +700,18 @@ export const CheckoutModal: React.FC = () => {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-zinc-500">Destinatário:</span>
-                      <span className="text-zinc-900 font-medium">{formData.name}</span>
+                      <span className="text-zinc-900 font-medium">{completedOrderData?.customerName || formData.name}</span>
                     </div>
+                    {(completedOrderData?.customerPhone || formData.phone) && (
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">WhatsApp / Telefone:</span>
+                        <span className="text-zinc-900 font-medium font-mono">{completedOrderData?.customerPhone || formData.phone}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
-                      <span className="text-zinc-500">WhatsApp / Telefone:</span>
-                      <span className="text-zinc-900 font-medium font-mono">{formData.phone}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">Endereço Cadastrado:</span>
-                      <span className="text-zinc-900 font-medium text-right max-w-[260px] truncate" title={`${formData.street}, ${formData.number} — ${formData.city}/${formData.state}`}>
-                        {formData.street}, {formData.number} — {formData.city}/${formData.state}
+                      <span className="text-zinc-500">Entrega:</span>
+                      <span className="text-zinc-900 font-medium text-right max-w-[260px] truncate" title={completedOrderData?.shippingAddress || ''}>
+                        {completedOrderData?.shippingAddress || 'A combinar via WhatsApp'}
                       </span>
                     </div>
 
@@ -838,7 +812,6 @@ export const CheckoutModal: React.FC = () => {
                 </div>
               )}
             </>
-          )}
 
         </div>
       </div>
