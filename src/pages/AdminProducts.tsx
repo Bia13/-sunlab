@@ -91,7 +91,8 @@ export const AdminProducts: React.FC = () => {
     pix_key_type: 'phone',
     pix_merchant_name: 'SunLab 3D',
     pix_merchant_city: 'SANTOS',
-    store_whatsapp: '13996061681'
+    store_whatsapp: '13996061681',
+    store_email: 'kaikyfarias.14@gmail.com'
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [testQrCodeUrl, setTestQrCodeUrl] = useState('');
@@ -108,7 +109,8 @@ export const AdminProducts: React.FC = () => {
             pix_key_type: s.pix_key_type || 'phone',
             pix_merchant_name: s.pix_merchant_name || 'SunLab 3D',
             pix_merchant_city: s.pix_merchant_city || 'SANTOS',
-            store_whatsapp: s.store_whatsapp || '13996061681'
+            store_whatsapp: s.store_whatsapp || '13996061681',
+            store_email: s.store_email || 'kaikyfarias.14@gmail.com'
           });
           return;
         }
@@ -121,7 +123,8 @@ export const AdminProducts: React.FC = () => {
           pix_key_type: data.pix_key_type || 'phone',
           pix_merchant_name: data.pix_merchant_name || 'SunLab 3D',
           pix_merchant_city: data.pix_merchant_city || 'SANTOS',
-          store_whatsapp: data.store_whatsapp || '13996061681'
+          store_whatsapp: data.store_whatsapp || '13996061681',
+          store_email: data.store_email || 'kaikyfarias.14@gmail.com'
         });
       }
     } catch (e) {
@@ -159,7 +162,8 @@ export const AdminProducts: React.FC = () => {
           saveSupabaseSetting('pix_key_type', pixSettings.pix_key_type),
           saveSupabaseSetting('pix_merchant_name', pixSettings.pix_merchant_name),
           saveSupabaseSetting('pix_merchant_city', pixSettings.pix_merchant_city),
-          saveSupabaseSetting('store_whatsapp', pixSettings.store_whatsapp)
+          saveSupabaseSetting('store_whatsapp', pixSettings.store_whatsapp),
+          saveSupabaseSetting('store_email', pixSettings.store_email)
         ]);
       }
       const token = localStorage.getItem('sunlab_auth_token');
@@ -1425,6 +1429,24 @@ export const AdminProducts: React.FC = () => {
                     />
                     <span className="text-[10px] text-zinc-400 mt-1 block">Máximo 15 caracteres sem acentos</span>
                   </div>
+                </div>
+
+                {/* E-mail para Receber Pedidos */}
+                <div>
+                  <label className="block text-xs font-bold text-zinc-800 mb-1.5">
+                    E-mail para Receber Formulários de Pedidos *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="seuemail@gmail.com"
+                    value={pixSettings.store_email}
+                    onChange={(e) => setPixSettings({ ...pixSettings, store_email: e.target.value })}
+                    className="w-full bg-zinc-50 focus:bg-white border border-zinc-300 rounded-xl px-3 py-2.5 text-xs text-zinc-900 font-medium focus:border-blue-500 outline-none"
+                  />
+                  <span className="text-[10px] text-zinc-500 mt-1 block">
+                    Cada pedido finalizado envia os dados de nome, telefone de contato e itens diretamente para este e-mail. *(No primeiro envio pelo FormSubmit, confirme o link de ativação enviado na sua caixa de entrada/spam).*
+                  </span>
                 </div>
 
                 {/* Botão de Salvar */}

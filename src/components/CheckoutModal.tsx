@@ -36,7 +36,7 @@ export const CheckoutModal: React.FC = () => {
   const [copiedWhatsAppText, setCopiedWhatsAppText] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isLoadingCep, setIsLoadingCep] = useState(false);
+  const [storeEmail, setStoreEmail] = useState('kaikyfarias.14@gmail.com');
   const [pixConfig, setPixConfig] = useState<PixConfig>(DEFAULT_PIX_CONFIG);
   const [pixPayload, setPixPayload] = useState('');
   const [pixQrCodeUrl, setPixQrCodeUrl] = useState('');
@@ -76,21 +76,13 @@ export const CheckoutModal: React.FC = () => {
     return null;
   };
 
-  // Address & Payer Form States (inicia vazio ou com os dados salvos da conta do usuário)
+  // Dados mínimos de identificação e contato
   const [formData, setFormData] = useState(() => {
     const saved = user?.email ? loadSavedProfile(user.email) : null;
     return {
       name: saved?.name || (user?.name && user.name !== 'SunLab Admin' && !user.name.includes('@') ? user.name : ''),
       email: user?.email || '',
-      phone: saved?.phone || '',
-      cpf: saved?.cpf || '',
-      cep: saved?.cep || '',
-      street: saved?.street || '',
-      number: saved?.number || '',
-      complement: saved?.complement || '',
-      neighborhood: saved?.neighborhood || '',
-      city: saved?.city || '',
-      state: saved?.state || ''
+      phone: saved?.phone || ''
     };
   });
 
@@ -111,15 +103,7 @@ export const CheckoutModal: React.FC = () => {
         ...prev,
         name: saved?.name || (user.name && user.name !== 'SunLab Admin' && !user.name.includes('@') ? user.name : prev.name || ''),
         email: user.email,
-        phone: saved?.phone || prev.phone || '',
-        cpf: saved?.cpf || prev.cpf || '',
-        cep: saved?.cep || prev.cep || '',
-        street: saved?.street || prev.street || '',
-        number: saved?.number || prev.number || '',
-        complement: saved?.complement || prev.complement || '',
-        neighborhood: saved?.neighborhood || prev.neighborhood || '',
-        city: saved?.city || prev.city || '',
-        state: saved?.state || prev.state || ''
+        phone: saved?.phone || prev.phone || ''
       }));
     }
   }, [user, isCheckoutOpen]);
@@ -154,28 +138,34 @@ export const CheckoutModal: React.FC = () => {
       try {
         if (isSupabaseConfigured()) {
           const s = await fetchSupabaseSettings();
-          if (s && s.pix_key) {
-            setPixConfig({
-              key: s.pix_key,
-              keyType: (s.pix_key_type as PixConfig['keyType']) || 'phone',
-              merchantName: s.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
-              merchantCity: s.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
-              whatsapp: s.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
-            });
-            return;
+          if (s) {
+            if (s.store_email) setStoreEmail(s.store_email);
+            if (s.pix_key) {
+              setPixConfig({
+                key: s.pix_key,
+                keyType: (s.pix_key_type as PixConfig['keyType']) || 'phone',
+                merchantName: s.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
+                merchantCity: s.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
+                whatsapp: s.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
+              });
+              return;
+            }
           }
         }
         const res = await fetch('/api/settings');
         if (res.ok) {
           const data = await res.json();
-          if (data && data.pix_key) {
-            setPixConfig({
-              key: data.pix_key,
-              keyType: data.pix_key_type || 'phone',
-              merchantName: data.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
-              merchantCity: data.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
-              whatsapp: data.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
-            });
+          if (data) {
+            if (data.store_email) setStoreEmail(data.store_email);
+            if (data.pix_key) {
+              setPixConfig({
+                key: data.pix_key,
+                keyType: data.pix_key_type || 'phone',
+                merchantName: data.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
+                merchantCity: data.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
+                whatsapp: data.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
+              });
+            }
           }
         }
       } catch (e) {
@@ -231,20 +221,6 @@ export const CheckoutModal: React.FC = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Formatação de CPF com máscara
-  const handleCpfChange = (val: string) => {
-    const raw = val.replace(/\D/g, '').slice(0, 11);
-    let formatted = raw;
-    if (raw.length > 9) {
-      formatted = `${raw.slice(0, 3)}.${raw.slice(3, 6)}.${raw.slice(6, 9)}-${raw.slice(9)}`;
-    } else if (raw.length > 6) {
-      formatted = `${raw.slice(0, 3)}.${raw.slice(3, 6)}.${raw.slice(6)}`;
-    } else if (raw.length > 3) {
-      formatted = `${raw.slice(0, 3)}.${raw.slice(3)}`;
-    }
-    setFormData(prev => ({ ...prev, cpf: formatted }));
-  };
-
   // Formatação de Telefone / WhatsApp com máscara
   const handlePhoneChange = (val: string) => {
     const raw = val.replace(/\D/g, '').slice(0, 11);
@@ -259,56 +235,6 @@ export const CheckoutModal: React.FC = () => {
     setFormData(prev => ({ ...prev, phone: formatted }));
   };
 
-  // Busca automática de endereço por CEP (ViaCEP)
-  const handleCepChange = async (val: string) => {
-    const raw = val.replace(/\D/g, '').slice(0, 8);
-    let formatted = raw;
-    if (raw.length > 5) {
-      formatted = `${raw.slice(0, 5)}-${raw.slice(5)}`;
-    }
-    setFormData(prev => ({ ...prev, cep: formatted }));
-
-    if (raw.length === 8) {
-      setIsLoadingCep(true);
-      try {
-        const res = await fetch(`https://viacep.com.br/ws/${raw}/json/`);
-        if (res.ok) {
-          const data = await res.json();
-          if (!data.erro) {
-            setFormData(prev => ({
-              ...prev,
-              street: data.logradouro || prev.street,
-              neighborhood: data.bairro || prev.neighborhood,
-              city: data.localidade || prev.city,
-              state: data.uf || prev.state
-            }));
-          }
-        }
-      } catch (e) {
-        console.warn('Erro ao consultar ViaCEP:', e);
-      } finally {
-        setIsLoadingCep(false);
-      }
-    }
-  };
-
-  // Validação simples de CPF
-  const isValidCPF = (cpf: string) => {
-    const clean = cpf.replace(/\D/g, '');
-    if (clean.length !== 11) return false;
-    if (/^(\d)\1{10}$/.test(clean)) return false;
-    let sum = 0;
-    for (let i = 0; i < 9; i++) sum += parseInt(clean.charAt(i), 10) * (10 - i);
-    let rev = 11 - (sum % 11);
-    if (rev === 10 || rev === 11) rev = 0;
-    if (rev !== parseInt(clean.charAt(9), 10)) return false;
-    sum = 0;
-    for (let i = 0; i < 10; i++) sum += parseInt(clean.charAt(i), 10) * (11 - i);
-    rev = 11 - (sum % 11);
-    if (rev === 10 || rev === 11) rev = 0;
-    return rev === parseInt(clean.charAt(10), 10);
-  };
-
   const handleCloseModal = () => {
     setStep('form');
     setCompletedOrderData(null);
@@ -316,21 +242,10 @@ export const CheckoutModal: React.FC = () => {
     closeCheckout();
   };
 
+  const phoneDigits = formData.phone.replace(/\D/g, '');
   const isProfileComplete = isAdmin
     ? true
-    : !user
-      ? Boolean(formData.name.trim())
-      : Boolean(
-          formData.name.trim() &&
-          formData.phone.trim() &&
-          formData.cpf.trim() &&
-          isValidCPF(formData.cpf) &&
-          formData.cep.trim() &&
-          formData.street.trim() &&
-          formData.number.trim() &&
-          formData.city.trim() &&
-          formData.state.trim()
-        );
+    : Boolean(formData.name.trim() && phoneDigits.length >= 10);
 
   // Gerador da mensagem completa e detalhada para o WhatsApp
   const generateWhatsAppMessage = (order: NonNullable<typeof completedOrderData>) => {
@@ -399,11 +314,9 @@ export const CheckoutModal: React.FC = () => {
     const finalCustomerName = formData.name.trim() || (isAdmin ? 'Venda Direta (Admin)' : 'Cliente');
     const finalCustomerEmail = formData.email.trim() || user?.email || (isAdmin ? 'admin@sunlab.com.br' : 'visitante@sunlab.com.br');
     const finalCustomerPhone = formData.phone.trim();
-
-    const hasAddress = Boolean(formData.street.trim() || formData.city.trim() || formData.cep.trim());
-    const shippingAddr = hasAddress
-      ? `${formData.street || 'Não informado'}, nº ${formData.number || 'S/N'}${formData.complement ? ' (' + formData.complement + ')' : ''}${formData.neighborhood ? ', ' + formData.neighborhood : ''} — ${formData.city || ''}/${formData.state || ''}${formData.cep ? ` (CEP: ${formData.cep})` : ''}`
-      : (isAdmin ? 'Venda Direta / Sem endereço informado' : 'A combinar');
+    const shippingAddr = isAdmin && !finalCustomerPhone
+      ? 'Venda Direta (Admin)'
+      : 'Contato via Telefone / WhatsApp';
 
     // Sincronizar criação do pedido com a API de pedidos (Vercel e Express)
     try {
@@ -471,6 +384,40 @@ export const CheckoutModal: React.FC = () => {
       localStorage.setItem('sunlab_customer_email', finalCustomerEmail);
     } catch (e) {
       console.warn('Erro ao salvar localmente:', e);
+    }
+
+    // Enviar formulário automático para o e-mail configurado do lojista
+    if (storeEmail && storeEmail.includes('@')) {
+      try {
+        const cleanDigits = finalCustomerPhone.replace(/\D/g, '');
+        const itemsSummary = itemsPayload
+          .map(it => `${it.quantity}x ${it.name}${it.color && it.color !== 'Padrão' ? ` (${it.color})` : ''} — R$ ${(it.quantity * it.unitPrice).toFixed(2).replace('.', ',')}`)
+          .join('\n');
+
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(storeEmail.trim())}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            _subject: `Novo Pedido SunLab #${confirmedOrderNumber} — ${finalCustomerName}`,
+            _template: 'table',
+            _captcha: 'false',
+            Pedido: `#${confirmedOrderNumber}`,
+            Cliente: finalCustomerName,
+            Telefone_de_Contato: finalCustomerPhone || 'Não informado',
+            WhatsApp_Direto: cleanDigits ? `https://wa.me/55${cleanDigits}` : 'Sem telefone',
+            Itens_Comprados: itemsSummary,
+            Valor_Total: `R$ ${payableTotal.toFixed(2).replace('.', ',')}`,
+            Pagamento: finalPaymentMethodLabel,
+            Status: 'Pendente de conferência'
+          })
+        });
+        clearTimeout(timer);
+      } catch (mailErr) {
+        console.warn('Aviso ao enviar formulário por e-mail:', mailErr);
+      }
     }
 
     clearCart();
@@ -561,7 +508,7 @@ export const CheckoutModal: React.FC = () => {
                   ) : (
                     <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/60 border border-blue-200 text-xs gap-2">
                       <span className="text-blue-950 font-medium">
-                        Compra rápida — informe apenas o seu nome para concluir.
+                        Informe seu nome e telefone de contato para concluir o pedido.
                       </span>
                       <button
                         type="button"
@@ -579,175 +526,39 @@ export const CheckoutModal: React.FC = () => {
 
                   {isAdmin && (
                     <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                      <strong>Modo Admin ativo:</strong> Você pode finalizar e salvar esta venda diretamente mesmo sem preencher CPF, telefone ou endereço.
+                      <strong>Modo Admin ativo:</strong> Você pode salvar a compra direta mesmo sem preencher nome ou telefone.
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="sm:col-span-2">
+                  <div className="grid grid-cols-1 gap-3">
+                    <div>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        {user ? 'Nome Completo do Destinatário *' : 'Seu Nome *'}
+                        Seu Nome *
                       </label>
                       <input
                         type="text"
                         required
                         value={formData.name}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                        placeholder="Digite seu nome"
-                        className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                        placeholder="Digite seu nome completo"
+                        className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
                       />
                     </div>
 
-                    <div className={user ? '' : 'sm:col-span-2'}>
+                    <div>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        {user ? 'WhatsApp / Celular com DDD *' : 'WhatsApp / Telefone (opcional)'}
+                        Telefone / WhatsApp de Contato *
                       </label>
                       <input
                         type="tel"
-                        required={Boolean(user)}
+                        required
                         value={formData.phone}
                         onChange={(e) => handlePhoneChange(e.target.value)}
                         placeholder="(13) 99999-9999"
-                        className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
+                        className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
                       />
                     </div>
-
-                    {user && (
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          CPF do Titular *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.cpf}
-                          onChange={(e) => handleCpfChange(e.target.value)}
-                          placeholder="000.000.000-00"
-                          className={`w-full bg-white border rounded-xl px-3 py-2 text-xs text-zinc-900 focus:ring-1 outline-none font-mono ${
-                            formData.cpf && !isValidCPF(formData.cpf)
-                              ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                              : 'border-zinc-300 focus:border-blue-500 focus:ring-blue-500'
-                          }`}
-                        />
-                        {formData.cpf && !isValidCPF(formData.cpf) && (
-                          <span className="text-[10px] text-red-500 mt-0.5 block">CPF inválido</span>
-                        )}
-                      </div>
-                    )}
                   </div>
-
-                  {/* Endereço Cadastrado (apenas quando logado) */}
-                  {user && (
-                  <div className="pt-2 border-t border-zinc-100 space-y-3">
-                    <span className="text-xs font-bold text-zinc-900 block">
-                      Endereço Cadastrado
-                    </span>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          CEP * {isLoadingCep && <span className="text-blue-600 text-[10px] animate-pulse">Buscando...</span>}
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.cep}
-                          onChange={(e) => handleCepChange(e.target.value)}
-                          placeholder="00000-000"
-                          maxLength={9}
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Rua / Avenida *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.street}
-                          onChange={(e) => setFormData({ ...formData, street: e.target.value })}
-                          placeholder="Nome do logradouro"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Número *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.number}
-                          onChange={(e) => setFormData({ ...formData, number: e.target.value })}
-                          placeholder="Ex: 123"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Complemento (opcional)
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.complement}
-                          onChange={(e) => setFormData({ ...formData, complement: e.target.value })}
-                          placeholder="Apto 42, Bloco B..."
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Bairro *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.neighborhood}
-                          onChange={(e) => setFormData({ ...formData, neighborhood: e.target.value })}
-                          placeholder="Bairro"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Cidade *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.city}
-                          onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                          placeholder="Cidade"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Estado (UF) *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={2}
-                          value={formData.state}
-                          onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none uppercase font-mono"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  )}
 
                   {/* Order Mini Summary */}
                   <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 flex items-center justify-between text-xs text-zinc-700">
