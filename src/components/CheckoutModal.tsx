@@ -4,10 +4,13 @@ import {
   X,
   CheckCircle,
   ShieldCheck,
+  QrCode,
   Copy,
   Check,
   MessageCircle,
   Clock,
+  Lock,
+  Key,
   Printer,
   Package,
   LogIn,
@@ -15,17 +18,30 @@ import {
 } from 'lucide-react';
 import { useCart, type CartItem } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
-import { isSupabaseConfigured, upsertSupabaseOrder } from '@/lib/supabase';
+import { fetchSupabaseSettings, isSupabaseConfigured, upsertSupabaseOrder } from '@/lib/supabase';
+import {
+  generatePixPayload,
+  generatePixQRCode,
+  DEFAULT_PIX_CONFIG,
+  type PixConfig
+} from '../utils/pix';
 
 export const CheckoutModal: React.FC = () => {
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const { isCheckoutOpen, closeCheckout, total, clearCart, cart } = useCart();
-  const [step, setStep] = useState<'form' | 'success'>('form');
+  const [step, setStep] = useState<'form' | 'payment' | 'success'>('form');
+  const [copiedPix, setCopiedPix] = useState(false);
+  const [copiedPixKey, setCopiedPixKey] = useState(false);
   const [copiedWhatsAppText, setCopiedWhatsAppText] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingCep, setIsLoadingCep] = useState(false);
+  const [pixConfig, setPixConfig] = useState<PixConfig>(DEFAULT_PIX_CONFIG);
+  const [pixPayload, setPixPayload] = useState('');
+  const [pixQrCodeUrl, setPixQrCodeUrl] = useState('');
+  const [isGeneratingPix, setIsGeneratingPix] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(15 * 60);
 
   const [completedOrderData, setCompletedOrderData] = useState<{
     orderNumber: string;
@@ -115,9 +131,105 @@ export const CheckoutModal: React.FC = () => {
       setCompletedOrderData(null);
       setOrderNumber('');
       setIsProcessing(false);
+      setTimeLeft(15 * 60);
+      setCopiedPix(false);
+      setCopiedPixKey(false);
       setCopiedWhatsAppText(false);
     }
   }, [isCheckoutOpen]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    if (step === 'payment' && timeLeft > 0) {
+      timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [step, timeLeft]);
+
+  // Carregar configurações oficiais do Pix (Supabase prioritário, fallback API local)
+  useEffect(() => {
+    const loadPixSettings = async () => {
+      try {
+        if (isSupabaseConfigured()) {
+          const s = await fetchSupabaseSettings();
+          if (s && s.pix_key) {
+            setPixConfig({
+              key: s.pix_key,
+              keyType: (s.pix_key_type as PixConfig['keyType']) || 'phone',
+              merchantName: s.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
+              merchantCity: s.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
+              whatsapp: s.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
+            });
+            return;
+          }
+        }
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.pix_key) {
+            setPixConfig({
+              key: data.pix_key,
+              keyType: data.pix_key_type || 'phone',
+              merchantName: data.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
+              merchantCity: data.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
+              whatsapp: data.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Usando configurações padrão para o Pix:', e);
+      }
+    };
+    if (isCheckoutOpen) {
+      loadPixSettings();
+    }
+  }, [isCheckoutOpen]);
+
+  // Gerar dinamicamente o código Pix Copia e Cola e o QR Code oficial com o valor exato do pedido
+  useEffect(() => {
+    if (total > 0 && isCheckoutOpen) {
+      try {
+        setIsGeneratingPix(true);
+        const payload = generatePixPayload({
+          key: pixConfig.key,
+          keyType: pixConfig.keyType,
+          name: pixConfig.merchantName,
+          city: pixConfig.merchantCity,
+          amount: total,
+          txid: '***'
+        });
+        setPixPayload(payload);
+        generatePixQRCode(payload)
+          .then(url => {
+            setPixQrCodeUrl(url);
+            setIsGeneratingPix(false);
+          })
+          .catch(() => setIsGeneratingPix(false));
+      } catch (err) {
+        console.error('Erro gerando Pix BRCode:', err);
+        setIsGeneratingPix(false);
+      }
+    }
+  }, [total, pixConfig, isCheckoutOpen, step]);
+
+  const formatFriendlyKey = (k: string) => {
+    const raw = k.replace(/\D/g, '');
+    if (raw.length === 13 && raw.startsWith('55')) {
+      return `(${raw.slice(2, 4)}) ${raw.slice(4, 9)}-${raw.slice(9)}`;
+    }
+    if (raw.length === 11) {
+      return `(${raw.slice(0, 2)}) ${raw.slice(2, 7)}-${raw.slice(7)}`;
+    }
+    return k;
+  };
+
+  const formatTimer = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   // Formatação de CPF com máscara
   const handleCpfChange = (val: string) => {
@@ -256,6 +368,14 @@ export const CheckoutModal: React.FC = () => {
     );
   };
 
+  const handleNextToPayment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isProfileComplete) return;
+    saveUserProfile(formData);
+    setTimeLeft(15 * 60);
+    setStep('payment');
+  };
+
   const handleCompleteOrder = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!isProfileComplete || isProcessing) return;
@@ -272,7 +392,8 @@ export const CheckoutModal: React.FC = () => {
     }));
 
     let confirmedOrderNumber = orderNumber || `SLB-${Math.floor(100000 + Math.random() * 900000)}`;
-    const finalPaymentMethodLabel = isAdmin ? 'Venda Direta (Admin)' : 'WhatsApp (A Combinar)';
+    const isDirectAdminSave = isAdmin && step === 'form';
+    const finalPaymentMethodLabel = isDirectAdminSave ? 'Venda Direta (Admin)' : 'Pix';
     const payableTotal = total;
 
     const finalCustomerName = formData.name.trim() || (isAdmin ? 'Venda Direta (Admin)' : 'Cliente');
@@ -282,7 +403,7 @@ export const CheckoutModal: React.FC = () => {
     const hasAddress = Boolean(formData.street.trim() || formData.city.trim() || formData.cep.trim());
     const shippingAddr = hasAddress
       ? `${formData.street || 'Não informado'}, nº ${formData.number || 'S/N'}${formData.complement ? ' (' + formData.complement + ')' : ''}${formData.neighborhood ? ', ' + formData.neighborhood : ''} — ${formData.city || ''}/${formData.state || ''}${formData.cep ? ` (CEP: ${formData.cep})` : ''}`
-      : (isAdmin ? 'Venda Direta / Sem endereço informado' : 'A combinar via WhatsApp');
+      : (isAdmin ? 'Venda Direta / Sem endereço informado' : 'A combinar');
 
     // Sincronizar criação do pedido com a API de pedidos (Vercel e Express)
     try {
@@ -326,7 +447,7 @@ export const CheckoutModal: React.FC = () => {
     setOrderNumber(confirmedOrderNumber);
     saveUserProfile(formData);
 
-    // Salvar permanentemente no Supabase (Nuvem) se configurado
+    // Salvar permanentemente no Supabase (Nuvem) se configurado (status Pendente para verificação do Pix)
     if (isSupabaseConfigured()) {
       upsertSupabaseOrder({
         id: `ord-${confirmedOrderNumber}`,
@@ -355,15 +476,20 @@ export const CheckoutModal: React.FC = () => {
     clearCart();
     setIsProcessing(false);
     setStep('success');
+  };
 
-    // Redirecionar / Abrir conversa no WhatsApp automaticamente apenas para clientes
-    if (!isAdmin) {
-      const msg = generateWhatsAppMessage(fullOrder);
-      const waUrl = `https://wa.me/5513996061681?text=${encodeURIComponent(msg)}`;
-      try {
-        window.open(waUrl, '_blank');
-      } catch (_) {}
-    }
+  const copyPixCode = () => {
+    if (!pixPayload) return;
+    navigator.clipboard.writeText(pixPayload);
+    setCopiedPix(true);
+    setTimeout(() => setCopiedPix(false), 2500);
+  };
+
+  const copyDirectPixKey = () => {
+    const rawToCopy = pixConfig.key.startsWith('+55') ? pixConfig.key.slice(3) : pixConfig.key;
+    navigator.clipboard.writeText(rawToCopy);
+    setCopiedPixKey(true);
+    setTimeout(() => setCopiedPixKey(false), 2500);
   };
 
   const copyWhatsAppDetails = () => {
@@ -395,7 +521,8 @@ export const CheckoutModal: React.FC = () => {
           <div className="flex items-center gap-2 sm:gap-2.5">
             <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 text-blue-700 shrink-0" />
             <h3 className="text-sm sm:text-base font-bold text-blue-950 truncate max-w-[260px] sm:max-w-none">
-              {step === 'form' && 'Finalizar Pedido — Dados de Cadastro'}
+              {step === 'form' && 'Finalizar Pedido — Identificação'}
+              {step === 'payment' && 'Pagamento via Pix'}
               {step === 'success' && 'Pedido Registrado com Sucesso!'}
             </h3>
           </div>
@@ -412,9 +539,9 @@ export const CheckoutModal: React.FC = () => {
         {/* Modal Content */}
         <div className="p-4 sm:p-6 overflow-y-auto">
           <>
-              {/* STEP 1: Formulário e Pedido Direto ao WhatsApp */}
+              {/* STEP 1: Identificação */}
               {step === 'form' && (
-                <form onSubmit={handleCompleteOrder} noValidate={isAdmin || !user} className="space-y-4">
+                <form onSubmit={handleNextToPayment} noValidate={isAdmin || !user} className="space-y-4">
                   {/* Banner de Identificação do Usuário */}
                   {user ? (
                     <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs">
@@ -641,30 +768,184 @@ export const CheckoutModal: React.FC = () => {
                     <button
                       type="submit"
                       disabled={!isProfileComplete || isProcessing}
-                      className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm transition-all shadow-md hover:shadow-lg active:scale-[0.99] cursor-pointer"
+                      className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm transition-all shadow-md hover:shadow-lg active:scale-[0.99] cursor-pointer"
                     >
-                      {isProcessing ? (
-                        <div className="flex items-center gap-2">
-                          <Loader2 className="w-4 h-4 animate-spin text-white" />
-                          <span>{isAdmin ? 'Salvando venda...' : 'Registrando pedido e abrindo WhatsApp...'}</span>
-                        </div>
-                      ) : (
-                        <>
-                          <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
-                          <span>{isAdmin ? 'Salvar Compra Direta (Sem Validação)' : 'Finalizar Pedido e Pagar no WhatsApp'}</span>
-                        </>
-                      )}
+                      <QrCode className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <span>Ir para Pagamento com Pix →</span>
                     </button>
-                    
+
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleCompleteOrder()}
+                        disabled={isProcessing}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold text-xs transition-all cursor-pointer"
+                      >
+                        {isProcessing ? 'Salvando venda...' : 'Salvar Compra Direta (Admin — Sem Pix)'}
+                      </button>
+                    )}
+
                     <p className="text-[11px] text-zinc-500 text-center flex items-center justify-center gap-1.5 pt-0.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>O pedido ficará salvo na sua conta e o WhatsApp abrirá para confirmação imediata.</span>
+                      <span>Na próxima tela exibiremos o QR Code e o código Pix Copia e Cola no valor exato do pedido.</span>
                     </p>
                   </div>
                 </form>
               )}
 
-              {/* STEP 2: Pedido Registrado e Confirmação via WhatsApp */}
+              {/* STEP 2: Pagamento Exclusivo via Pix */}
+              {step === 'payment' && (
+                <div className="space-y-5 animate-in fade-in">
+                  {/* Trust Badge do Pix */}
+                  <div className="flex items-center justify-between p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-950">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                        <QrCode className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold text-zinc-900">Pagamento via Pix</div>
+                        <p className="text-[10px] text-zinc-600">Pague via QR Code ou Copia e Cola e confirme abaixo</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
+                      <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="hidden sm:inline">Pix Oficial BCB</span>
+                    </div>
+                  </div>
+
+                  {/* PIX AREA */}
+                  <div className="p-5 sm:p-6 rounded-2xl bg-zinc-50 border border-zinc-200 flex flex-col items-center text-center space-y-4">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-zinc-300 text-zinc-700 text-xs font-mono font-semibold">
+                      <Clock className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Válido por: {formatTimer(timeLeft)}</span>
+                    </div>
+
+                    {/* QR Code Pix */}
+                    <div className="w-48 h-48 bg-white p-3 rounded-2xl flex items-center justify-center shadow-sm border-2 border-emerald-500/30 relative">
+                      {isGeneratingPix || !pixQrCodeUrl ? (
+                        <div className="flex flex-col items-center justify-center gap-2 text-zinc-400">
+                          <Loader2 className="w-7 h-7 animate-spin text-emerald-600" />
+                          <span className="text-[11px] font-medium text-zinc-500">Gerando QR Code Pix...</span>
+                        </div>
+                      ) : (
+                        <img
+                          src={pixQrCodeUrl}
+                          alt="QR Code Pix SunLab"
+                          className="w-full h-full object-contain rounded-xl select-none"
+                        />
+                      )}
+                    </div>
+
+                    <div>
+                      <span className="text-xs text-zinc-500">Valor exato para pagamento Pix:</span>
+                      <h4 className="text-3xl font-extrabold text-zinc-900 font-display mt-0.5">
+                        R$ {total.toFixed(2).replace('.', ',')}
+                      </h4>
+                    </div>
+
+                    {/* Código Pix Copia e Cola visível */}
+                    {pixPayload && (
+                      <div className="w-full max-w-md space-y-1.5 text-left">
+                        <label className="block text-[11px] font-semibold text-zinc-600">
+                          Código Pix Copia e Cola:
+                        </label>
+                        <div className="p-2.5 rounded-xl bg-white border border-zinc-300 text-[11px] font-mono text-zinc-700 break-all select-all max-h-20 overflow-y-auto">
+                          {pixPayload}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Informações da Chave Pix */}
+                    <div className="w-full max-w-md p-3.5 rounded-xl bg-white border border-zinc-200 text-left text-xs space-y-1.5 shadow-xs">
+                      <div className="flex items-center justify-between pb-1.5 border-b border-zinc-100">
+                        <span className="text-zinc-500 font-medium">Chave Pix:</span>
+                        <strong className="text-zinc-900 font-mono font-bold">
+                          {formatFriendlyKey(pixConfig.key)}
+                        </strong>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">Favorecido:</span>
+                        <span className="text-zinc-800 font-semibold">{pixConfig.merchantName}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">Cidade:</span>
+                        <span className="text-zinc-700">{pixConfig.merchantCity}</span>
+                      </div>
+                    </div>
+
+                    {/* Botões de Cópia */}
+                    <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full max-w-md">
+                      <button
+                        type="button"
+                        onClick={copyPixCode}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-[0.98]"
+                      >
+                        {copiedPix ? (
+                          <>
+                            <Check className="w-4 h-4 text-emerald-300" />
+                            <span>Pix Copia e Cola Copiado!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            <span>Copiar Pix Copia e Cola</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={copyDirectPixKey}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border border-zinc-300 text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-[0.98]"
+                      >
+                        {copiedPixKey ? (
+                          <>
+                            <Check className="w-4 h-4 text-emerald-600" />
+                            <span>Chave Copiada!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Key className="w-4 h-4 text-zinc-500" />
+                            <span>Copiar Chave Pix</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Ações de Confirmação */}
+                  <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setStep('form')}
+                      className="text-xs text-zinc-500 hover:text-zinc-800 cursor-pointer py-2 text-center"
+                    >
+                      ← Voltar aos dados
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCompleteOrder()}
+                      disabled={isProcessing}
+                      className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-md cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
+                    >
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Registrando Pedido...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="w-4 h-4" />
+                          <span>Já fiz o Pix — Confirmar Pedido</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 3: Pedido Registrado e Aguardando Conferência */}
               {step === 'success' && (
                 <div className="text-center py-6 space-y-6 animate-in fade-in">
                   <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto shadow-xs">
@@ -673,8 +954,8 @@ export const CheckoutModal: React.FC = () => {
 
                   <div>
                     <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold mb-2 shadow-xs">
-                      <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-                      <span>Pedido Registrado • Aguardando Pagamento no WhatsApp</span>
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Pedido Registrado • Aguardando Conferência do Pix</span>
                     </div>
                     <div className="block mt-1">
                       <span className="text-xs font-mono font-bold px-3 py-1 rounded-full bg-zinc-100 border border-zinc-300 text-zinc-700 uppercase tracking-widest">
@@ -685,17 +966,17 @@ export const CheckoutModal: React.FC = () => {
                       Pedido Realizado com Sucesso!
                     </h4>
                     <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 leading-relaxed">
-                      O seu pedido já está salvo na sua conta SunLab. Você foi direcionado ao WhatsApp da loja para combinar o pagamento. Assim que recebido, confirmamos o status e preparamos o seu envio!
+                      Seu pedido já foi salvo no sistema da SunLab! Assim que verificarmos que o Pix caiu na conta, confirmaremos o pedido e iniciaremos o preparo.
                     </p>
                   </div>
 
                   {/* Order Receipt Box with Products Breakdown */}
                   <div className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 text-xs text-zinc-600 max-w-lg mx-auto text-left space-y-3">
                     <div className="flex justify-between pb-2 border-b border-zinc-200">
-                      <span className="text-zinc-500">Status do Pedido:</span>
+                      <span className="text-zinc-500">Pagamento / Status:</span>
                       <span className="text-amber-800 font-semibold flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                        <span>Aguardando Pagamento no WhatsApp</span>
+                        <span>{completedOrderData?.paymentMethod || 'Pix'} • Pendente de confirmação</span>
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -764,7 +1045,7 @@ export const CheckoutModal: React.FC = () => {
                       className="w-full inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition-all cursor-pointer shadow-md hover:shadow-lg active:scale-[0.99]"
                     >
                       <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
-                      <span>Abrir WhatsApp da SunLab para Pagamento</span>
+                      <span>Enviar Comprovante no WhatsApp (Opcional)</span>
                     </a>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

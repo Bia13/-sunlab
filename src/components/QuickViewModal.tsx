@@ -110,9 +110,6 @@ export const QuickViewModal: React.FC = () => {
                         <span>{quickViewProduct.originalPrice.toFixed(2).replace('.', ',')}</span>
                       </span>
                     )}
-                    <span className="text-xs text-zinc-700 font-medium bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200 shrink-0 whitespace-nowrap">
-                      5% OFF no Pix
-                    </span>
                   </div>
                 ) : (
                   <span className="text-lg font-bold text-zinc-800">

@@ -126,7 +126,7 @@ export const Footer: React.FC = () => {
               {subscribed && (
                 <div className="flex items-center gap-1.5 text-xs text-zinc-700 font-medium animate-in fade-in">
                   <Check className="w-3.5 h-3.5 text-zinc-600" />
-                  <span>Cadastrado! Use SUNLAB10</span>
+                  <span>E-mail cadastrado com sucesso!</span>
                 </div>
               )}
             </form>

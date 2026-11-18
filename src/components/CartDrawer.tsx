@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Trash2, Plus, Minus, ShoppingBag, ArrowRight, Tag } from 'lucide-react';
+import { X, Trash2, Plus, Minus, ShoppingBag, ArrowRight } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { useNavigate } from 'react-router';
 
@@ -12,17 +12,11 @@ export const CartDrawer: React.FC = () => {
     updateQuantity,
     clearCart,
     subtotal,
-    discount,
     total,
-    appliedCoupon,
-    applyCoupon,
-    removeCoupon,
     totalItems,
     openCheckout
   } = useCart();
 
-  const [couponInput, setCouponInput] = useState('');
-  const [couponFeedback, setCouponFeedback] = useState<{ message: string; isError: boolean } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const navigate = useNavigate();
 
@@ -37,19 +31,6 @@ export const CartDrawer: React.FC = () => {
   };
 
   if (!isCartOpen) return null;
-
-  const handleApplyCoupon = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!couponInput.trim()) return;
-    const res = applyCoupon(couponInput);
-    setCouponFeedback({
-      message: res.message,
-      isError: !res.success
-    });
-    if (res.success) {
-      setCouponInput('');
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -195,45 +176,6 @@ export const CartDrawer: React.FC = () => {
           {/* Footer & Checkout Area */}
           {cart.length > 0 && (
             <div className="p-4 sm:p-5 border-t border-zinc-200 bg-zinc-50 space-y-4">
-              {/* Coupon Form */}
-              <div>
-                {appliedCoupon ? (
-                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white border border-zinc-200 text-xs">
-                    <div className="flex items-center gap-1.5 text-blue-900 font-medium">
-                      <Tag className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Cupom <strong>{appliedCoupon}</strong> ativo</span>
-                    </div>
-                    <button
-                      onClick={removeCoupon}
-                      className="text-xs text-blue-600 hover:text-blue-900 underline cursor-pointer"
-                    >
-                      Remover
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={handleApplyCoupon} className="flex gap-2">
-                    <input
-                      type="text"
-                      value={couponInput}
-                      onChange={(e) => setCouponInput(e.target.value)}
-                      placeholder="Cupom (ex: SUNLAB10)"
-                      className="flex-1 bg-white border border-zinc-300 rounded-lg px-3 py-1.5 text-xs text-blue-950 placeholder-blue-300 outline-none focus:border-blue-500 uppercase"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3.5 py-1.5 bg-zinc-200 hover:bg-zinc-300 text-blue-950 border border-zinc-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      Aplicar
-                    </button>
-                  </form>
-                )}
-                {couponFeedback && (
-                  <p className={`text-[11px] mt-1 ${couponFeedback.isError ? 'text-red-500' : 'text-blue-800'}`}>
-                    {couponFeedback.message}
-                  </p>
-                )}
-              </div>
-
               {/* Order Calculations */}
               <div className="space-y-1.5 text-xs text-zinc-600 pt-1">
                 <div className="flex justify-between">
@@ -243,15 +185,6 @@ export const CartDrawer: React.FC = () => {
                     <span>{subtotal.toFixed(2).replace('.', ',')}</span>
                   </span>
                 </div>
-                {discount > 0 && (
-                  <div className="flex justify-between text-zinc-700 font-medium">
-                    <span>Desconto do Cupom</span>
-                    <span className="whitespace-nowrap inline-flex items-baseline">
-                      <span className="mr-0.5">- R$</span>
-                      <span>{discount.toFixed(2).replace('.', ',')}</span>
-                    </span>
-                  </div>
-                )}
                 <div className="flex justify-between text-base font-bold text-zinc-950 pt-2 border-t border-zinc-200">
                   <span>Total</span>
                   <span className="text-zinc-900 text-lg whitespace-nowrap inline-flex items-baseline">
@@ -259,9 +192,6 @@ export const CartDrawer: React.FC = () => {
                     <span>{total.toFixed(2).replace('.', ',')}</span>
                   </span>
                 </div>
-                <p className="text-[11px] text-zinc-400 text-right">
-                  ou até 3x de R$ {(total / 3).toFixed(2).replace('.', ',')} sem juros
-                </p>
               </div>
 
               {/* Action Buttons */}
