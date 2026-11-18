@@ -386,11 +386,14 @@ export const CheckoutModal: React.FC = () => {
       console.warn('Erro ao salvar localmente:', e);
     }
 
-    // Sincronizar venda com o MeuGasto3D (ERP3D) e enviar formulário para o e-mail configurado do lojista
-    const erpSyncTask = syncOrderToErp3d({
-      ...fullOrder,
-      status: initialOrderStatus
-    }).catch(err => console.warn('[ERP3D] Falha na sincronização da venda:', err));
+    // Sincronizar venda com o MeuGasto3D (ERP3D) apenas quando já confirmada/paga (ex: Venda Direta Admin)
+    // Pedidos via Pix ("Pendente") entram no MeuGasto3D somente após confirmação do pagamento no painel Admin
+    const erpSyncTask = isDirectAdminSave
+      ? syncOrderToErp3d({
+          ...fullOrder,
+          status: initialOrderStatus
+        }).catch(err => console.warn('[ERP3D] Falha na sincronização da venda:', err))
+      : Promise.resolve(false);
 
     const emailTask = (async () => {
       if (!storeEmail || !storeEmail.includes('@')) return;

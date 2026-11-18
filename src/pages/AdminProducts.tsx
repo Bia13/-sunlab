@@ -294,7 +294,7 @@ export const AdminProducts: React.FC = () => {
       if (isSupabaseConfigured()) {
         upsertSupabaseOrder(updatedOrder).catch(() => {});
       }
-      if (newStatus === 'Cancelado') {
+      if (newStatus === 'Pendente' || newStatus === 'Cancelado') {
         deleteOrderFromErp3d(match.orderNumber).catch(() => {});
       } else {
         syncOrderToErp3d(updatedOrder).catch(() => {});
@@ -390,7 +390,7 @@ export const AdminProducts: React.FC = () => {
     if (isSupabaseConfigured()) {
       upsertSupabaseOrder(editingOrder).catch(() => {});
     }
-    if (editingOrder.status === 'Cancelado') {
+    if (editingOrder.status === 'Pendente' || editingOrder.status === 'Cancelado') {
       deleteOrderFromErp3d(editingOrder.orderNumber).catch(() => {});
     } else {
       syncOrderToErp3d(editingOrder).catch(() => {});

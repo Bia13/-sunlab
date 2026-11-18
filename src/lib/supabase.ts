@@ -503,6 +503,10 @@ const mapSiteStatusToErp = (status?: string, total = 0): { status: 'pago' | 'pen
 
 export const syncOrderToErp3d = async (order: Erp3dOrderInput): Promise<boolean> => {
   if (!order?.orderNumber) return false;
+  const normalizedStatus = String(order.status || 'Pendente').trim().toLowerCase();
+  if (normalizedStatus === 'pendente' || normalizedStatus === 'cancelado') {
+    return deleteOrderFromErp3d(order.orderNumber);
+  }
   try {
     const data = await loadErp3dState();
     if (!data) return false;
