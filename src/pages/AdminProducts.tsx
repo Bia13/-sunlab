@@ -92,7 +92,7 @@ export const AdminProducts: React.FC = () => {
     pix_merchant_name: 'SunLab 3D',
     pix_merchant_city: 'SANTOS',
     store_whatsapp: '13996061681',
-    store_email: 'kaikyfarias.14@gmail.com'
+    store_email: 'sunlab013@gmail.com'
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [testQrCodeUrl, setTestQrCodeUrl] = useState('');
@@ -110,7 +110,7 @@ export const AdminProducts: React.FC = () => {
             pix_merchant_name: s.pix_merchant_name || 'SunLab 3D',
             pix_merchant_city: s.pix_merchant_city || 'SANTOS',
             store_whatsapp: s.store_whatsapp || '13996061681',
-            store_email: s.store_email || 'kaikyfarias.14@gmail.com'
+            store_email: s.store_email || 'sunlab013@gmail.com'
           });
           return;
         }
@@ -124,7 +124,7 @@ export const AdminProducts: React.FC = () => {
           pix_merchant_name: data.pix_merchant_name || 'SunLab 3D',
           pix_merchant_city: data.pix_merchant_city || 'SANTOS',
           store_whatsapp: data.store_whatsapp || '13996061681',
-          store_email: data.store_email || 'kaikyfarias.14@gmail.com'
+          store_email: data.store_email || 'sunlab013@gmail.com'
         });
       }
     } catch (e) {

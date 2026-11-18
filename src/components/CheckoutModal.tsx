@@ -36,7 +36,7 @@ export const CheckoutModal: React.FC = () => {
   const [copiedWhatsAppText, setCopiedWhatsAppText] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [storeEmail, setStoreEmail] = useState('kaikyfarias.14@gmail.com');
+  const [storeEmail, setStoreEmail] = useState('sunlab013@gmail.com');
   const [pixConfig, setPixConfig] = useState<PixConfig>(DEFAULT_PIX_CONFIG);
   const [pixPayload, setPixPayload] = useState('');
   const [pixQrCodeUrl, setPixQrCodeUrl] = useState('');
@@ -380,13 +380,17 @@ export const CheckoutModal: React.FC = () => {
       console.warn('Erro ao salvar localmente:', e);
     }
 
-    // Enviar formulário automático para o e-mail configurado do lojista
+    // Enviar formulário automático para o e-mail configurado do lojista no formato completo do WhatsApp
     if (storeEmail && storeEmail.includes('@')) {
       try {
         const cleanDigits = finalCustomerPhone.replace(/\D/g, '');
-        const itemsSummary = itemsPayload
-          .map(it => `${it.quantity}x ${it.name}${it.color && it.color !== 'Padrão' ? ` (${it.color})` : ''} — R$ ${(it.quantity * it.unitPrice).toFixed(2).replace('.', ',')}`)
+        const itemsDetailed = itemsPayload
+          .map((it, idx) => {
+            const tamPart = it.size && it.size !== 'Padrão' ? ` | Tam: ${it.size}` : '';
+            return `${idx + 1}. ${it.name} | Cor: ${it.color || 'Padrão'}${tamPart} | Qtd: ${it.quantity} un. | Valor: R$ ${(it.quantity * it.unitPrice).toFixed(2).replace('.', ',')}`;
+          })
           .join('\n');
+        const whatsappMessage = generateWhatsAppMessage(fullOrder);
 
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 5000);
@@ -395,17 +399,16 @@ export const CheckoutModal: React.FC = () => {
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           signal: ctrl.signal,
           body: JSON.stringify({
-            _subject: `Novo Pedido SunLab #${confirmedOrderNumber} — ${finalCustomerName}`,
-            _template: 'table',
+            _subject: `🌊 NOVO PEDIDO REALIZADO — SUNLAB 3D (#${confirmedOrderNumber})`,
+            _template: 'box',
             _captcha: 'false',
+            Mensagem_Completa: whatsappMessage,
             Pedido: `#${confirmedOrderNumber}`,
-            Cliente: finalCustomerName,
-            Telefone_de_Contato: finalCustomerPhone || 'Não informado',
-            WhatsApp_Direto: cleanDigits ? `https://wa.me/55${cleanDigits}` : 'Sem telefone',
-            Itens_Comprados: itemsSummary,
-            Valor_Total: `R$ ${payableTotal.toFixed(2).replace('.', ',')}`,
-            Pagamento: finalPaymentMethodLabel,
-            Status: 'Pendente de conferência'
+            Nome_do_Cliente: finalCustomerName,
+            Telefone_WhatsApp: finalCustomerPhone || 'Não informado',
+            Chamar_Cliente_no_WhatsApp: cleanDigits ? `https://wa.me/55${cleanDigits}` : 'Não informado',
+            Produtos_Escolhidos: itemsDetailed,
+            Valor_Total: `R$ ${payableTotal.toFixed(2).replace('.', ',')}`
           })
         });
         clearTimeout(timer);

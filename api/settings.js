@@ -6,7 +6,7 @@ let memorySettings = global._sunlab_settings || {
   pix_merchant_name: 'SunLab 3D',
   pix_merchant_city: 'SANTOS',
   store_whatsapp: '13996061681',
-  store_email: 'kaikyfarias.14@gmail.com'
+  store_email: 'sunlab013@gmail.com'
 };
 global._sunlab_settings = memorySettings;
 
