@@ -177,9 +177,11 @@ export const CheckoutModal: React.FC = () => {
     }
   }, [isCheckoutOpen]);
 
+  const payableAmount = completedOrderData?.totalAmount || total;
+
   // Gerar dinamicamente o código Pix Copia e Cola e o QR Code oficial com o valor exato do pedido
   useEffect(() => {
-    if (total > 0 && isCheckoutOpen) {
+    if (payableAmount > 0 && isCheckoutOpen) {
       try {
         setIsGeneratingPix(true);
         const payload = generatePixPayload({
@@ -187,7 +189,7 @@ export const CheckoutModal: React.FC = () => {
           keyType: pixConfig.keyType,
           name: pixConfig.merchantName,
           city: pixConfig.merchantCity,
-          amount: total,
+          amount: payableAmount,
           txid: '***'
         });
         setPixPayload(payload);
@@ -202,7 +204,7 @@ export const CheckoutModal: React.FC = () => {
         setIsGeneratingPix(false);
       }
     }
-  }, [total, pixConfig, isCheckoutOpen, step]);
+  }, [payableAmount, pixConfig, isCheckoutOpen, step]);
 
   const formatFriendlyKey = (k: string) => {
     const raw = k.replace(/\D/g, '');
@@ -283,15 +285,7 @@ export const CheckoutModal: React.FC = () => {
     );
   };
 
-  const handleNextToPayment = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isProfileComplete) return;
-    saveUserProfile(formData);
-    setTimeLeft(15 * 60);
-    setStep('payment');
-  };
-
-  const handleCompleteOrder = async (e?: React.FormEvent) => {
+  const handleCompleteOrder = async (e?: React.FormEvent, mode: 'pix' | 'admin_direct' = 'pix') => {
     if (e) e.preventDefault();
     if (!isProfileComplete || isProcessing) return;
 
@@ -307,14 +301,14 @@ export const CheckoutModal: React.FC = () => {
     }));
 
     let confirmedOrderNumber = orderNumber || `SLB-${Math.floor(100000 + Math.random() * 900000)}`;
-    const isDirectAdminSave = isAdmin && step === 'form';
+    const isDirectAdminSave = isAdmin && mode === 'admin_direct';
     const finalPaymentMethodLabel = isDirectAdminSave ? 'Venda Direta (Admin)' : 'Pix';
     const payableTotal = total;
 
     const finalCustomerName = formData.name.trim() || (isAdmin ? 'Venda Direta (Admin)' : 'Cliente');
     const finalCustomerEmail = formData.email.trim() || user?.email || (isAdmin ? 'admin@sunlab.com.br' : 'visitante@sunlab.com.br');
     const finalCustomerPhone = formData.phone.trim();
-    const shippingAddr = isAdmin && !finalCustomerPhone
+    const shippingAddr = isDirectAdminSave && !finalCustomerPhone
       ? 'Venda Direta (Admin)'
       : 'Contato via Telefone / WhatsApp';
 
@@ -422,7 +416,12 @@ export const CheckoutModal: React.FC = () => {
 
     clearCart();
     setIsProcessing(false);
-    setStep('success');
+    if (isDirectAdminSave) {
+      setStep('success');
+    } else {
+      setTimeLeft(15 * 60);
+      setStep('payment');
+    }
   };
 
   const copyPixCode = () => {
@@ -488,7 +487,7 @@ export const CheckoutModal: React.FC = () => {
           <>
               {/* STEP 1: Identificação */}
               {step === 'form' && (
-                <form onSubmit={handleNextToPayment} noValidate={isAdmin || !user} className="space-y-4">
+                <form onSubmit={(e) => handleCompleteOrder(e, 'pix')} noValidate={isAdmin || !user} className="space-y-4">
                   {/* Banner de Identificação do Usuário */}
                   {user ? (
                     <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs">
@@ -581,14 +580,23 @@ export const CheckoutModal: React.FC = () => {
                       disabled={!isProfileComplete || isProcessing}
                       className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm transition-all shadow-md hover:shadow-lg active:scale-[0.99] cursor-pointer"
                     >
-                      <QrCode className="w-4 h-4 sm:w-5 sm:h-5" />
-                      <span>Ir para Pagamento com Pix →</span>
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                          <span>Gerando Código Pix...</span>
+                        </>
+                      ) : (
+                        <>
+                          <QrCode className="w-4 h-4 sm:w-5 sm:h-5" />
+                          <span>Gerar Código Pix para Pagamento →</span>
+                        </>
+                      )}
                     </button>
 
                     {isAdmin && (
                       <button
                         type="button"
-                        onClick={() => handleCompleteOrder()}
+                        onClick={() => handleCompleteOrder(undefined, 'admin_direct')}
                         disabled={isProcessing}
                         className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold text-xs transition-all cursor-pointer"
                       >
@@ -607,20 +615,24 @@ export const CheckoutModal: React.FC = () => {
               {/* STEP 2: Pagamento Exclusivo via Pix */}
               {step === 'payment' && (
                 <div className="space-y-5 animate-in fade-in">
-                  {/* Trust Badge do Pix */}
-                  <div className="flex items-center justify-between p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-950">
+                  {/* Trust Badge do Pix + Número do Pedido */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-950">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
                         <QrCode className="w-4 h-4" />
                       </div>
                       <div>
-                        <div className="font-bold text-zinc-900">Pagamento via Pix</div>
-                        <p className="text-[10px] text-zinc-600">Pague via QR Code ou Copia e Cola e confirme abaixo</p>
+                        <div className="font-bold text-zinc-900">
+                          Pedido #{orderNumber} — Aguardando Pagamento
+                        </div>
+                        <p className="text-[10px] text-zinc-600">
+                          Escaneie o QR Code ou copie o código Pix abaixo para pagar
+                        </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
+                    <div className="flex items-center gap-1 text-[11px] text-emerald-700 font-medium self-start sm:self-auto">
                       <Lock className="w-3.5 h-3.5 text-emerald-600" />
-                      <span className="hidden sm:inline">Pix Oficial BCB</span>
+                      <span>Pix Oficial BCB</span>
                     </div>
                   </div>
 
@@ -650,7 +662,7 @@ export const CheckoutModal: React.FC = () => {
                     <div>
                       <span className="text-xs text-zinc-500">Valor exato para pagamento Pix:</span>
                       <h4 className="text-3xl font-extrabold text-zinc-900 font-display mt-0.5">
-                        R$ {total.toFixed(2).replace('.', ',')}
+                        R$ {payableAmount.toFixed(2).replace('.', ',')}
                       </h4>
                     </div>
 
@@ -724,33 +736,30 @@ export const CheckoutModal: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Ações de Confirmação */}
-                  <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-1">
+                  {/* Aviso de conferência e ações pós-Pix */}
+                  <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 leading-relaxed text-center">
+                    Seu pedido foi registrado como <strong>Pendente</strong>. Realize o pagamento via QR Code ou Pix Copia e Cola acima — assim que identificarmos o Pix em nossa conta, confirmaremos seu pedido e entraremos em contato pelo telefone/WhatsApp informado.
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-1">
                     <button
                       type="button"
-                      onClick={() => setStep('form')}
-                      className="text-xs text-zinc-500 hover:text-zinc-800 cursor-pointer py-2 text-center"
+                      onClick={() => {
+                        handleCloseModal();
+                        navigate('/orders');
+                      }}
+                      className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 font-semibold text-xs transition-colors cursor-pointer"
                     >
-                      ← Voltar aos dados
+                      <Package className="w-4 h-4 text-blue-700" />
+                      <span>Ver Meus Pedidos</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => handleCompleteOrder()}
-                      disabled={isProcessing}
-                      className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-md cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
+                      onClick={handleCloseModal}
+                      className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border border-zinc-300 font-semibold text-xs transition-colors cursor-pointer"
                     >
-                      {isProcessing ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Registrando Pedido...</span>
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle className="w-4 h-4" />
-                          <span>Já fiz o Pix — Confirmar Pedido</span>
-                        </>
-                      )}
+                      <span>Fechar e voltar à loja</span>
                     </button>
                   </div>
                 </div>
