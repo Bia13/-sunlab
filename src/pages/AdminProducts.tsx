@@ -34,14 +34,17 @@ import { useProducts } from '@/context/ProductContext';
 import { useAuth } from '@/context/AuthContext';
 import SunLabLogo from '@/components/SunLabLogo';
 import { generatePixPayload, generatePixQRCode } from '../utils/pix';
-import { isSupabaseConfigured, fetchSupabaseOrders, upsertSupabaseOrder, deleteSupabaseOrder, upsertSupabaseProduct, fetchSupabaseSettings, saveSupabaseSetting } from '@/lib/supabase';
+import { isSupabaseConfigured, fetchSupabaseOrders, upsertSupabaseOrder, deleteSupabaseOrder, upsertSupabaseProduct, fetchSupabaseSettings, saveSupabaseSetting, syncOrderToErp3d, deleteOrderFromErp3d } from '@/lib/supabase';
 
 interface OrderItem {
+  productId?: string;
   name: string;
+  slug?: string;
   color?: string;
   size?: string;
   quantity: number;
   unitPrice: number;
+  unitCost?: number;
 }
 
 interface Order {
@@ -284,11 +287,17 @@ export const AdminProducts: React.FC = () => {
     setActionFeedback({ message: `Status do pedido atualizado para: ${newStatus}` });
     setTimeout(() => setActionFeedback(null), 3500);
 
-    // 3. Sincronizar com Supabase se configurado
-    if (isSupabaseConfigured()) {
-      const match = orders.find(o => o.id === orderId || o.orderNumber === orderId);
-      if (match) {
-        upsertSupabaseOrder({ ...match, status: newStatus }).catch(() => {});
+    // 3. Sincronizar com Supabase e MeuGasto3D (ERP3D)
+    const match = orders.find(o => o.id === orderId || o.orderNumber === orderId);
+    if (match) {
+      const updatedOrder = { ...match, status: newStatus };
+      if (isSupabaseConfigured()) {
+        upsertSupabaseOrder(updatedOrder).catch(() => {});
+      }
+      if (newStatus === 'Cancelado') {
+        deleteOrderFromErp3d(match.orderNumber).catch(() => {});
+      } else {
+        syncOrderToErp3d(updatedOrder).catch(() => {});
       }
     }
 
@@ -326,9 +335,12 @@ export const AdminProducts: React.FC = () => {
       setActionFeedback({ message: `Pedido ${orderNumber} removido com sucesso!` });
       setTimeout(() => setActionFeedback(null), 3500);
 
-      // 3. Sincronizar com Supabase se configurado
+      // 3. Sincronizar remoção com Supabase e MeuGasto3D (ERP3D)
       if (isSupabaseConfigured()) {
         deleteSupabaseOrder(orderId || orderNumber).catch(() => {});
+      }
+      if (orderNumber) {
+        deleteOrderFromErp3d(orderNumber).catch(() => {});
       }
 
       // 4. Sincronizar com o backend
@@ -374,9 +386,14 @@ export const AdminProducts: React.FC = () => {
     setActionFeedback({ message: `Pedido ${editingOrder.orderNumber} atualizado com sucesso!` });
     setTimeout(() => setActionFeedback(null), 3500);
 
-    // 3. Salvar no Supabase se configurado
+    // 3. Salvar no Supabase e sincronizar com MeuGasto3D (ERP3D)
     if (isSupabaseConfigured()) {
       upsertSupabaseOrder(editingOrder).catch(() => {});
+    }
+    if (editingOrder.status === 'Cancelado') {
+      deleteOrderFromErp3d(editingOrder.orderNumber).catch(() => {});
+    } else {
+      syncOrderToErp3d(editingOrder).catch(() => {});
     }
 
     // 4. Salvar no backend local / Vercel

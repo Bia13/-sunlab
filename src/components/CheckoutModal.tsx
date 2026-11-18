@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useCart, type CartItem } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
-import { fetchSupabaseSettings, isSupabaseConfigured, upsertSupabaseOrder } from '@/lib/supabase';
+import { fetchSupabaseSettings, isSupabaseConfigured, upsertSupabaseOrder, syncOrderToErp3d } from '@/lib/supabase';
 import {
   generatePixPayload,
   generatePixQRCode,
@@ -51,6 +51,7 @@ export const CheckoutModal: React.FC = () => {
     shippingAddress: string;
     paymentMethod: string;
     items: Array<{
+      productId?: string;
       name: string;
       slug?: string;
       image?: string;
@@ -58,6 +59,7 @@ export const CheckoutModal: React.FC = () => {
       size?: string;
       quantity: number;
       unitPrice: number;
+      unitCost?: number;
     }>;
     totalAmount: number;
   } | null>(null);
@@ -291,13 +293,15 @@ export const CheckoutModal: React.FC = () => {
 
     setIsProcessing(true);
     const itemsPayload = cart.map((item: CartItem) => ({
+      productId: item.product.id,
       name: item.product.name,
       slug: item.product.slug,
       image: item.product.images[0] || '',
       color: item.selectedColor.name,
       size: item.selectedSize || 'Padrão',
       quantity: item.quantity,
-      unitPrice: item.unitPrice
+      unitPrice: item.unitPrice,
+      unitCost: Number((item.product.specs as any)?.cost) || 0
     }));
 
     let confirmedOrderNumber = orderNumber || `SLB-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -354,7 +358,9 @@ export const CheckoutModal: React.FC = () => {
     setOrderNumber(confirmedOrderNumber);
     saveUserProfile(formData);
 
-    // Salvar permanentemente no Supabase (Nuvem) se configurado (status Pendente para verificação do Pix)
+    const initialOrderStatus = isDirectAdminSave ? 'Em Produção 3D' : 'Pendente';
+
+    // Salvar permanentemente no Supabase (Nuvem) se configurado
     if (isSupabaseConfigured()) {
       upsertSupabaseOrder({
         id: `ord-${confirmedOrderNumber}`,
@@ -366,7 +372,7 @@ export const CheckoutModal: React.FC = () => {
         paymentMethod: finalPaymentMethodLabel,
         items: itemsPayload,
         totalAmount: payableTotal,
-        status: 'Pendente'
+        status: initialOrderStatus
       }).catch(err => console.warn('[Supabase] Falha ao enviar pedido:', err));
     }
 
@@ -380,8 +386,14 @@ export const CheckoutModal: React.FC = () => {
       console.warn('Erro ao salvar localmente:', e);
     }
 
-    // Enviar formulário automático para o e-mail configurado do lojista no formato completo do WhatsApp
-    if (storeEmail && storeEmail.includes('@')) {
+    // Sincronizar venda com o MeuGasto3D (ERP3D) e enviar formulário para o e-mail configurado do lojista
+    const erpSyncTask = syncOrderToErp3d({
+      ...fullOrder,
+      status: initialOrderStatus
+    }).catch(err => console.warn('[ERP3D] Falha na sincronização da venda:', err));
+
+    const emailTask = (async () => {
+      if (!storeEmail || !storeEmail.includes('@')) return;
       try {
         const cleanDigits = finalCustomerPhone.replace(/\D/g, '');
         const itemsDetailed = itemsPayload
@@ -415,7 +427,9 @@ export const CheckoutModal: React.FC = () => {
       } catch (mailErr) {
         console.warn('Aviso ao enviar formulário por e-mail:', mailErr);
       }
-    }
+    })();
+
+    await Promise.allSettled([erpSyncTask, emailTask]);
 
     clearCart();
     setIsProcessing(false);
