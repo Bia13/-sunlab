@@ -16,6 +16,8 @@ interface CartContextType {
   addToCart: (product: Product, quantity?: number, color?: ProductColor, size?: string) => void;
   removeFromCart: (itemId: string) => void;
   updateQuantity: (itemId: string, quantity: number) => void;
+  /** Troca a cor de um item; se já existir o mesmo produto nessa cor, junta as quantidades. */
+  changeItemColor: (itemId: string, color: ProductColor) => void;
   clearCart: () => void;
   subtotal: number;
   discount: number;
@@ -188,8 +190,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       ];
     });
-
-    setIsCartOpen(true);
+    // Não abre mais o carrinho a cada produto adicionado: o retorno é a foto voando até o
+    // ícone do carrinho e o contador subindo. O carrinho abre quando a pessoa clica nele.
   };
 
   const removeFromCart = (itemId: string) => {
@@ -206,6 +208,23 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         item.id === itemId ? { ...item, quantity } : item
       )
     );
+  };
+
+  const changeItemColor = (itemId: string, color: ProductColor) => {
+    setCart(prev => {
+      const item = prev.find(i => i.id === itemId);
+      if (!item) return prev;
+      const newId = `${item.product.id}-${color.name}-${item.selectedSize || 'std'}`;
+      if (newId === itemId) return prev;
+      const existing = prev.find(i => i.id === newId);
+      if (existing) {
+        // Mesmo produto já está no carrinho nessa cor: junta numa linha só.
+        return prev
+          .filter(i => i.id !== itemId)
+          .map(i => (i.id === newId ? { ...i, quantity: i.quantity + item.quantity } : i));
+      }
+      return prev.map(i => (i.id === itemId ? { ...i, id: newId, selectedColor: color } : i));
+    });
   };
 
   const clearCart = () => {
@@ -265,6 +284,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addToCart,
         removeFromCart,
         updateQuantity,
+        changeItemColor,
         clearCart,
         subtotal,
         discount,

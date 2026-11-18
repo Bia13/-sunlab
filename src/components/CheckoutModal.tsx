@@ -1,18 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
-import {
-  X,
-  CheckCircle,
-  ShieldCheck,
-  Copy,
-  Check,
-  MessageCircle,
-  Clock,
-  Printer,
-  Package,
-  LogIn,
-  Loader2
-} from 'lucide-react';
+import { X, Check, Copy, MessageCircle, Package, LogIn, Loader2 } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { ButtonWithIcon } from '@/components/ui/button-with-icon';
+import { cn } from '@/lib/utils';
 import { useCart, type CartItem } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
 import { isSupabaseConfigured, upsertSupabaseOrder } from '@/lib/supabase';
@@ -26,6 +17,9 @@ export const CheckoutModal: React.FC = () => {
   const [orderNumber, setOrderNumber] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingCep, setIsLoadingCep] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
 
   const [completedOrderData, setCompletedOrderData] = useState<{
     orderNumber: string;
@@ -116,8 +110,42 @@ export const CheckoutModal: React.FC = () => {
       setOrderNumber('');
       setIsProcessing(false);
       setCopiedWhatsAppText(false);
+      setShowErrors(false);
     }
   }, [isCheckoutOpen]);
+
+  // Diálogo acessível: trava a rolagem do fundo, foco no primeiro campo, Esc fecha e Tab fica preso no modal.
+  useEffect(() => {
+    if (!isCheckoutOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    const opener = document.activeElement as HTMLElement | null;
+    document.body.style.overflow = 'hidden';
+    const t = window.setTimeout(() => {
+      panelRef.current?.querySelector<HTMLElement>('input, button')?.focus();
+    }, 60);
+    const onKey = (e: KeyboardEvent) => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      if (e.key === 'Escape') {
+        if (!panel.querySelector('[role="status"]')) closeCheckout();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = [...panel.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input, select, textarea')];
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      opener?.focus?.();
+    };
+  }, [isCheckoutOpen, closeCheckout]);
 
   // Formatação de CPF com máscara
   const handleCpfChange = (val: string) => {
@@ -376,445 +404,313 @@ export const CheckoutModal: React.FC = () => {
     }
   };
 
-  if (!isCheckoutOpen) return null;
+  // Campos obrigatórios que faltam (só aparecem depois da primeira tentativa de enviar).
+  const fieldErrors: Partial<Record<keyof typeof formData, string>> = {};
+  if (!isAdmin) {
+    if (!formData.name.trim()) fieldErrors.name = 'Diga como podemos te chamar.';
+    if (user) {
+      if (!formData.phone.trim()) fieldErrors.phone = 'Informe um WhatsApp com DDD.';
+      if (!formData.cpf.trim()) fieldErrors.cpf = 'Informe o CPF.';
+      else if (!isValidCPF(formData.cpf)) fieldErrors.cpf = 'Esse CPF não é válido.';
+      if (!formData.cep.trim()) fieldErrors.cep = 'Informe o CEP.';
+      if (!formData.street.trim()) fieldErrors.street = 'Informe a rua.';
+      if (!formData.number.trim()) fieldErrors.number = 'Informe o número.';
+      if (!formData.city.trim()) fieldErrors.city = 'Informe a cidade.';
+      if (!formData.state.trim()) fieldErrors.state = 'UF';
+    }
+  }
+  const errorOf = (key: keyof typeof formData) => (showErrors ? fieldErrors[key] : undefined);
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isProfileComplete) {
+      setShowErrors(true);
+      const first = Object.keys(fieldErrors)[0];
+      if (first) document.getElementById(`co-${first}`)?.focus();
+      return;
+    }
+    handleCompleteOrder();
+  };
+
+  const field = (key: keyof typeof formData) => ({
+    id: `co-${key}`,
+    'aria-invalid': errorOf(key) ? true : undefined,
+    'aria-describedby': errorOf(key) ? `co-${key}-error` : undefined,
+    className: cn(inputBase, errorOf(key) && errorRing)
+  });
+
+  const itemCount = cart.reduce((n, i) => n + i.quantity, 0);
+  const canClose = step !== 'success' && !isProcessing;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 overflow-y-auto">
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-zinc-700/30 backdrop-blur-xs transition-opacity"
-        onClick={() => {
-          if (step !== 'success' && !isProcessing) handleCloseModal();
-        }}
-      />
+    <AnimatePresence>
+      {isCheckoutOpen && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-6">
+          <motion.div
+            aria-hidden="true"
+            className="absolute inset-0 bg-[#061A30]/48 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => canClose && handleCloseModal()}
+          />
 
-      <div className="relative w-full max-w-2xl rounded-2xl sm:rounded-3xl bg-white border border-zinc-200 shadow-2xl overflow-hidden z-10 my-auto sm:my-8 max-h-[96vh] flex flex-col">
-        
-        {/* Modal Top Bar */}
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-zinc-200 bg-zinc-50 shrink-0">
-          <div className="flex items-center gap-2 sm:gap-2.5">
-            <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 text-blue-700 shrink-0" />
-            <h3 className="text-sm sm:text-base font-bold text-blue-950 truncate max-w-[260px] sm:max-w-none">
-              {step === 'form' && 'Finalizar Pedido — Dados de Cadastro'}
-              {step === 'success' && 'Pedido Registrado com Sucesso!'}
-            </h3>
-          </div>
-          {step !== 'success' && (
-            <button
-              onClick={handleCloseModal}
-              className="p-1 rounded-lg text-blue-500 hover:text-blue-950 hover:bg-zinc-200 transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          )}
-        </div>
+          <motion.div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="checkout-title"
+            className="relative flex max-h-[92dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-[0_32px_80px_-24px_rgba(6,26,48,0.48)] sm:rounded-3xl"
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 24 }}
+            transition={{ duration: reduceMotion ? 0.15 : 0.32, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {/* Cabeçalho */}
+            <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-6 sm:px-8 sm:pt-8">
+              <div>
+                <p className="flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-zinc-600">
+                  <span aria-hidden="true" className="h-px w-6 bg-amber-500" />
+                  {step === 'form' ? 'Finalizar pedido' : `Pedido #${orderNumber}`}
+                </p>
+                <h2 id="checkout-title" className="mt-3 font-display text-[28px] font-light leading-9 tracking-tight text-[#0A2540]">
+                  {step === 'form' ? (
+                    <>Quase <span className="text-amber-700">pronto.</span></>
+                  ) : (
+                    <>Pedido <span className="text-amber-700">registrado.</span></>
+                  )}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseModal}
+                disabled={isProcessing}
+                aria-label="Fechar"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-600 ring-1 ring-inset ring-zinc-200 transition-colors hover:bg-zinc-100 hover:text-[#0A2540] focus-visible:outline-2 focus-visible:outline-[#0A2540] disabled:opacity-48 cursor-pointer"
+              >
+                <X aria-hidden="true" className="h-5 w-5" />
+              </button>
+            </div>
 
-        {/* Modal Content */}
-        <div className="p-4 sm:p-6 overflow-y-auto">
-          <>
-              {/* STEP 1: Formulário e Pedido Direto ao WhatsApp */}
-              {step === 'form' && (
-                <form onSubmit={handleCompleteOrder} noValidate={isAdmin || !user} className="space-y-4">
-                  {/* Banner de Identificação do Usuário */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 sm:px-8 sm:pb-8">
+              {step === 'form' ? (
+                <form onSubmit={onSubmit} noValidate className="flex flex-col gap-6">
+                  {/* Quem está comprando */}
                   {user ? (
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">
-                          {user.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <span className="font-semibold text-blue-950 block">{user.name}</span>
-                          <span className="text-blue-700 text-[11px]">{user.email}</span>
-                        </div>
-                      </div>
-                      <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-blue-200 text-blue-800 font-medium">
-                        {isAdmin ? 'Admin (Sem Validação)' : 'Conta Conectada'}
+                    <div className="flex items-center gap-3 rounded-2xl bg-[#F6F1E7] p-4">
+                      <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#0A2540] text-sm font-semibold text-amber-300">
+                        {user.name.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold leading-5 text-zinc-900">{user.name}</span>
+                        <span className="block truncate text-sm leading-5 text-zinc-600">{user.email}</span>
+                      </span>
+                      <span className="shrink-0 rounded-full bg-white px-3 py-1 text-xs font-medium leading-4 text-[#0A2540] ring-1 ring-inset ring-black/8">
+                        {isAdmin ? 'Admin' : 'Conta conectada'}
                       </span>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/60 border border-blue-200 text-xs gap-2">
-                      <span className="text-blue-950 font-medium">
-                        Compra rápida — informe apenas o seu nome para concluir.
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#F6F1E7] p-4">
+                      <p className="text-sm leading-5 text-zinc-800">
+                        Compra rápida: só o seu nome é obrigatório.
+                      </p>
                       <button
                         type="button"
                         onClick={() => {
                           closeCheckout();
                           navigate('/login?redirect=checkout');
                         }}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 shrink-0 cursor-pointer underline underline-offset-2"
+                        className="inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-semibold text-[#0A2540] ring-1 ring-inset ring-zinc-300 transition-colors hover:ring-[#0A2540] focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
                       >
-                        <LogIn className="w-3 h-3" />
-                        <span>Entrar</span>
+                        <LogIn aria-hidden="true" className="h-4 w-4" />
+                        Entrar
                       </button>
                     </div>
                   )}
 
                   {isAdmin && (
-                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                      <strong>Modo Admin ativo:</strong> Você pode finalizar e salvar esta venda diretamente mesmo sem preencher CPF, telefone ou endereço.
-                    </div>
+                    <p className="rounded-2xl bg-amber-50 p-4 text-sm leading-5 text-amber-900 ring-1 ring-inset ring-amber-200">
+                      <strong className="font-semibold">Modo admin:</strong> dá para salvar a venda sem CPF, telefone ou endereço.
+                    </p>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        {user ? 'Nome Completo do Destinatário *' : 'Seu Nome *'}
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                        placeholder="Digite seu nome"
-                        className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                      />
-                    </div>
-
-                    <div className={user ? '' : 'sm:col-span-2'}>
-                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        {user ? 'WhatsApp / Celular com DDD *' : 'WhatsApp / Telefone (opcional)'}
-                      </label>
-                      <input
-                        type="tel"
-                        required={Boolean(user)}
-                        value={formData.phone}
-                        onChange={(e) => handlePhoneChange(e.target.value)}
-                        placeholder="(13) 99999-9999"
-                        className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
-                      />
-                    </div>
-
+                  {/* Dados */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field id="co-name" label={user ? 'Nome de quem recebe' : 'Seu nome'} error={errorOf('name')} className="sm:col-span-2">
+                      <input {...field('name')} type="text" autoComplete="name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+                    </Field>
+                    <Field id="co-phone" label="WhatsApp" optional={!user} error={errorOf('phone')} className={user ? '' : 'sm:col-span-2'}>
+                      <input {...field('phone')} type="tel" inputMode="tel" autoComplete="tel-national" placeholder="(13) 99999-9999" value={formData.phone} onChange={e => handlePhoneChange(e.target.value)} />
+                    </Field>
                     {user && (
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          CPF do Titular *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.cpf}
-                          onChange={(e) => handleCpfChange(e.target.value)}
-                          placeholder="000.000.000-00"
-                          className={`w-full bg-white border rounded-xl px-3 py-2 text-xs text-zinc-900 focus:ring-1 outline-none font-mono ${
-                            formData.cpf && !isValidCPF(formData.cpf)
-                              ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                              : 'border-zinc-300 focus:border-blue-500 focus:ring-blue-500'
-                          }`}
-                        />
-                        {formData.cpf && !isValidCPF(formData.cpf) && (
-                          <span className="text-[10px] text-red-500 mt-0.5 block">CPF inválido</span>
-                        )}
-                      </div>
+                      <Field id="co-cpf" label="CPF" error={errorOf('cpf') || (formData.cpf && !isValidCPF(formData.cpf) ? 'Esse CPF não é válido.' : undefined)}>
+                        <input {...field('cpf')} type="text" inputMode="numeric" placeholder="000.000.000-00" value={formData.cpf} onChange={e => handleCpfChange(e.target.value)} />
+                      </Field>
                     )}
                   </div>
 
-                  {/* Endereço Cadastrado (apenas quando logado) */}
+                  {/* Endereço (só com conta) */}
                   {user && (
-                  <div className="pt-2 border-t border-zinc-100 space-y-3">
-                    <span className="text-xs font-bold text-zinc-900 block">
-                      Endereço Cadastrado
-                    </span>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          CEP * {isLoadingCep && <span className="text-blue-600 text-[10px] animate-pulse">Buscando...</span>}
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.cep}
-                          onChange={(e) => handleCepChange(e.target.value)}
-                          placeholder="00000-000"
-                          maxLength={9}
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
-                        />
+                    <fieldset className="flex flex-col gap-4">
+                      <legend className="mb-4 flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-zinc-600">
+                        <span aria-hidden="true" className="h-px w-6 bg-amber-500" />
+                        Endereço de entrega
+                      </legend>
+                      <div className="grid grid-cols-6 gap-4">
+                        <Field id="co-cep" label="CEP" error={errorOf('cep')} help={isLoadingCep ? 'Buscando endereço…' : undefined} className="col-span-6 sm:col-span-2">
+                          <input {...field('cep')} type="text" inputMode="numeric" autoComplete="postal-code" maxLength={9} placeholder="00000-000" value={formData.cep} onChange={e => handleCepChange(e.target.value)} />
+                        </Field>
+                        <Field id="co-street" label="Rua" error={errorOf('street')} className="col-span-6 sm:col-span-4">
+                          <input {...field('street')} type="text" autoComplete="address-line1" value={formData.street} onChange={e => setFormData({ ...formData, street: e.target.value })} />
+                        </Field>
+                        <Field id="co-number" label="Número" error={errorOf('number')} className="col-span-2">
+                          <input {...field('number')} type="text" inputMode="numeric" value={formData.number} onChange={e => setFormData({ ...formData, number: e.target.value })} />
+                        </Field>
+                        <Field id="co-complement" label="Complemento" optional className="col-span-4">
+                          <input {...field('complement')} type="text" autoComplete="address-line2" placeholder="Apto, bloco…" value={formData.complement} onChange={e => setFormData({ ...formData, complement: e.target.value })} />
+                        </Field>
+                        <Field id="co-neighborhood" label="Bairro" optional className="col-span-6 sm:col-span-2">
+                          <input {...field('neighborhood')} type="text" value={formData.neighborhood} onChange={e => setFormData({ ...formData, neighborhood: e.target.value })} />
+                        </Field>
+                        <Field id="co-city" label="Cidade" error={errorOf('city')} className="col-span-4 sm:col-span-3">
+                          <input {...field('city')} type="text" autoComplete="address-level2" value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} />
+                        </Field>
+                        <Field id="co-state" label="UF" error={errorOf('state')} className="col-span-2 sm:col-span-1">
+                          <input {...field('state')} type="text" autoComplete="address-level1" maxLength={2} value={formData.state} onChange={e => setFormData({ ...formData, state: e.target.value.toUpperCase() })} />
+                        </Field>
                       </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Rua / Avenida *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.street}
-                          onChange={(e) => setFormData({ ...formData, street: e.target.value })}
-                          placeholder="Nome do logradouro"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Número *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.number}
-                          onChange={(e) => setFormData({ ...formData, number: e.target.value })}
-                          placeholder="Ex: 123"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none font-mono"
-                        />
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Complemento (opcional)
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.complement}
-                          onChange={(e) => setFormData({ ...formData, complement: e.target.value })}
-                          placeholder="Apto 42, Bloco B..."
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Bairro *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.neighborhood}
-                          onChange={(e) => setFormData({ ...formData, neighborhood: e.target.value })}
-                          placeholder="Bairro"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Cidade *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.city}
-                          onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                          placeholder="Cidade"
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                          Estado (UF) *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={2}
-                          value={formData.state}
-                          onChange={(e) => setFormData({ ...formData, state: e.target.value.toUpperCase() })}
-                          className="w-full bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none uppercase font-mono"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                    </fieldset>
                   )}
 
-                  {/* Order Mini Summary */}
-                  <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 flex items-center justify-between text-xs text-zinc-700">
-                    <div className="flex items-center gap-2 text-zinc-600">
-                      <CheckCircle className="w-4 h-4 text-emerald-600" />
-                      <span>Qualidade e garantia SunLab</span>
+                  {/* Resumo */}
+                  <dl className="flex items-end justify-between gap-4 border-t border-zinc-200 pt-6">
+                    <div>
+                      <dt className="text-sm leading-5 text-zinc-600">{itemCount} {itemCount === 1 ? 'item' : 'itens'}</dt>
+                      <dd className="text-sm leading-5 text-zinc-600">Pagamento e entrega combinados no WhatsApp</dd>
                     </div>
                     <div className="text-right">
-                      <span className="text-zinc-400 text-[10px] block">Valor Total</span>
-                      <span className="font-bold text-zinc-900 text-sm">
-                        R$ {total.toFixed(2).replace('.', ',')}
-                      </span>
+                      <dt className="text-xs font-semibold uppercase leading-4 tracking-[0.16em] text-zinc-600">Total</dt>
+                      <dd className="mt-1 font-display text-[28px] font-light leading-8 tabular-nums text-[#0A2540]">{brl(total)}</dd>
                     </div>
-                  </div>
+                  </dl>
 
-                  {/* Submit Button */}
-                  <div className="space-y-2 pt-2">
-                    <button
-                      type="submit"
-                      disabled={!isProfileComplete || isProcessing}
-                      className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-300 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm transition-all shadow-md hover:shadow-lg active:scale-[0.99] cursor-pointer"
-                    >
-                      {isProcessing ? (
-                        <div className="flex items-center gap-2">
-                          <Loader2 className="w-4 h-4 animate-spin text-white" />
-                          <span>{isAdmin ? 'Salvando venda...' : 'Registrando pedido e abrindo WhatsApp...'}</span>
-                        </div>
-                      ) : (
-                        <>
-                          <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
-                          <span>{isAdmin ? 'Salvar Compra Direta (Sem Validação)' : 'Finalizar Pedido e Pagar no WhatsApp'}</span>
-                        </>
-                      )}
-                    </button>
-                    
-                    <p className="text-[11px] text-zinc-500 text-center flex items-center justify-center gap-1.5 pt-0.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>O pedido ficará salvo na sua conta e o WhatsApp abrirá para confirmação imediata.</span>
-                    </p>
+                  <div className="flex flex-col gap-3">
+                    <ButtonWithIcon type="submit" icon={isProcessing ? Loader2 : MessageCircle} disabled={isProcessing} className="w-full">
+                      {isProcessing ? 'Registrando pedido…' : isAdmin ? 'Salvar venda direta' : 'Enviar pedido pelo WhatsApp'}
+                    </ButtonWithIcon>
+                    {!isAdmin && (
+                      <p className="text-center text-sm leading-5 text-zinc-600">
+                        O pedido fica salvo e o WhatsApp da SunLab abre com tudo escrito.
+                      </p>
+                    )}
                   </div>
                 </form>
-              )}
-
-              {/* STEP 2: Pedido Registrado e Confirmação via WhatsApp */}
-              {step === 'success' && (
-                <div className="text-center py-6 space-y-6 animate-in fade-in">
-                  <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto shadow-xs">
-                    <CheckCircle className="w-8 h-8 text-emerald-600" />
-                  </div>
-
-                  <div>
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold mb-2 shadow-xs">
-                      <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-                      <span>Pedido Registrado • Aguardando Pagamento no WhatsApp</span>
-                    </div>
-                    <div className="block mt-1">
-                      <span className="text-xs font-mono font-bold px-3 py-1 rounded-full bg-zinc-100 border border-zinc-300 text-zinc-700 uppercase tracking-widest">
-                        Pedido #{orderNumber}
-                      </span>
-                    </div>
-                    <h4 className="text-2xl font-extrabold text-zinc-900 font-display mt-3">
-                      Pedido Realizado com Sucesso!
-                    </h4>
-                    <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 leading-relaxed">
-                      O seu pedido já está salvo na sua conta SunLab. Você foi direcionado ao WhatsApp da loja para combinar o pagamento. Assim que recebido, confirmamos o status e preparamos o seu envio!
+              ) : (
+                /* Pedido registrado */
+                <div className="flex flex-col gap-6">
+                  <div role="status" className="flex items-start gap-4">
+                    <span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-800">
+                      <Check className="h-6 w-6" />
+                    </span>
+                    <p className="text-base leading-6 text-zinc-600">
+                      {isAdmin
+                        ? 'A venda foi salva.'
+                        : 'Abrimos o WhatsApp da SunLab com o pedido escrito. É só enviar a mensagem para combinar pagamento e entrega.'}
                     </p>
                   </div>
 
-                  {/* Order Receipt Box with Products Breakdown */}
-                  <div className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 text-xs text-zinc-600 max-w-lg mx-auto text-left space-y-3">
-                    <div className="flex justify-between pb-2 border-b border-zinc-200">
-                      <span className="text-zinc-500">Status do Pedido:</span>
-                      <span className="text-amber-800 font-semibold flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                        <span>Aguardando Pagamento no WhatsApp</span>
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">Destinatário:</span>
-                      <span className="text-zinc-900 font-medium">{completedOrderData?.customerName || formData.name}</span>
-                    </div>
-                    {(completedOrderData?.customerPhone || formData.phone) && (
-                      <div className="flex justify-between">
-                        <span className="text-zinc-500">WhatsApp / Telefone:</span>
-                        <span className="text-zinc-900 font-medium font-mono">{completedOrderData?.customerPhone || formData.phone}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">Entrega:</span>
-                      <span className="text-zinc-900 font-medium text-right max-w-[260px] truncate" title={completedOrderData?.shippingAddress || ''}>
-                        {completedOrderData?.shippingAddress || 'A combinar via WhatsApp'}
-                      </span>
-                    </div>
-
-                    {/* Purchased Products Detailed List */}
-                    {completedOrderData && completedOrderData.items && completedOrderData.items.length > 0 && (
-                      <div className="pt-2 border-t border-zinc-200 space-y-2">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-blue-900 block">
-                          Itens do Pedido ({completedOrderData.items.length}):
-                        </span>
-                        <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                          {completedOrderData.items.map((it, idx) => (
-                            <div key={idx} className="flex items-center justify-between bg-white p-2 rounded-xl border border-zinc-200">
-                              <div className="flex items-center gap-2.5">
-                                {it.image && (
-                                  <img src={it.image} alt={it.name} className="w-8 h-8 rounded-lg object-cover border border-zinc-200" />
-                                )}
-                                <div>
-                                  <div className="font-semibold text-zinc-900 text-xs">{it.name}</div>
-                                  <div className="text-[10px] text-zinc-500">
-                                    {it.color && `Cor: ${it.color}`} {it.size && `• Tam: ${it.size}`} • {it.quantity}x
-                                  </div>
-                                </div>
-                              </div>
-                              <span className="font-mono font-bold text-zinc-900 text-xs">
-                                R$ {(it.quantity * it.unitPrice).toFixed(2).replace('.', ',')}
+                  {completedOrderData && (
+                    <div className="rounded-2xl bg-[#F6F1E7] p-4 sm:p-6">
+                      <ul className="flex flex-col divide-y divide-zinc-300/60">
+                        {completedOrderData.items.map((it, idx) => (
+                          <li key={idx} className="flex items-center gap-3 py-3 first:pt-0">
+                            {it.image && <img src={it.image} alt="" className="h-12 w-12 shrink-0 rounded-xl bg-white object-cover" />}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-semibold leading-5 text-zinc-900">{it.name}</span>
+                              <span className="block text-sm leading-5 text-zinc-600">
+                                {it.quantity}× {it.color && it.color !== 'Padrão' ? `· ${it.color}` : ''}
                               </span>
-                            </div>
-                          ))}
+                            </span>
+                            <span className="shrink-0 text-sm font-semibold leading-5 tabular-nums text-zinc-900">{brl(it.quantity * it.unitPrice)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <dl className="mt-3 flex flex-col gap-2 border-t border-zinc-300/60 pt-4 text-sm leading-5">
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-zinc-600">Para</dt>
+                          <dd className="text-right font-medium text-zinc-900">{completedOrderData.customerName}</dd>
                         </div>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between pt-2 border-t border-zinc-200">
-                      <span className="font-bold text-zinc-900">Total a Pagar:</span>
-                      <span className="text-zinc-900 font-extrabold text-base">
-                        R$ {(completedOrderData?.totalAmount || total).toFixed(2).replace('.', ',')}
-                      </span>
+                        <div className="flex justify-between gap-4">
+                          <dt className="text-zinc-600">Entrega</dt>
+                          <dd className="text-right font-medium text-zinc-900">{completedOrderData.shippingAddress}</dd>
+                        </div>
+                        <div className="flex items-end justify-between gap-4 pt-2">
+                          <dt className="font-semibold text-zinc-900">Total</dt>
+                          <dd className="font-display text-2xl font-light leading-8 tabular-nums text-[#0A2540]">{brl(completedOrderData.totalAmount)}</dd>
+                        </div>
+                      </dl>
                     </div>
+                  )}
+
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    {!isAdmin && completedOrderData && (
+                      <ButtonWithIcon
+                        href={`https://wa.me/5513996061681?text=${encodeURIComponent(generateWhatsAppMessage(completedOrderData))}`}
+                        variant="dark"
+                        icon={MessageCircle}
+                      >
+                        Abrir o WhatsApp
+                      </ButtonWithIcon>
+                    )}
+                    <ButtonWithIcon to="/orders" variant="outline" icon={Package} onClick={handleCloseModal}>
+                      Meus pedidos
+                    </ButtonWithIcon>
                   </div>
 
-                  {/* Action Buttons for WhatsApp & Orders Page */}
-                  <div className="space-y-2.5 max-w-lg mx-auto pt-1">
-                    {/* Primary: Send Full Order Details to WhatsApp */}
-                    <a
-                      href={`https://wa.me/5513996061681?text=${encodeURIComponent(
-                        completedOrderData ? generateWhatsAppMessage(completedOrderData) : ''
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm transition-all cursor-pointer shadow-md hover:shadow-lg active:scale-[0.99]"
-                    >
-                      <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
-                      <span>Abrir WhatsApp da SunLab para Pagamento</span>
-                    </a>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                    {!isAdmin && (
                       <button
                         type="button"
                         onClick={copyWhatsAppDetails}
-                        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 font-semibold text-xs transition-colors cursor-pointer border border-zinc-200"
+                        className="inline-flex h-10 items-center gap-2 text-sm font-semibold text-[#0A2540] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
                       >
-                        {copiedWhatsAppText ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-zinc-600" />}
-                        <span>{copiedWhatsAppText ? 'Copiado!' : 'Copiar Texto'}</span>
+                        {copiedWhatsAppText ? <Check aria-hidden="true" className="h-4 w-4 text-emerald-700" /> : <Copy aria-hidden="true" className="h-4 w-4" />}
+                        <span aria-live="polite">{copiedWhatsAppText ? 'Texto copiado' : 'Copiar texto do pedido'}</span>
                       </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleCloseModal();
-                          navigate('/orders');
-                        }}
-                        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-900 font-semibold text-xs transition-colors cursor-pointer border border-blue-200"
-                      >
-                        <Package className="w-3.5 h-3.5 text-blue-700" />
-                        <span>Ver Meus Pedidos</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => window.print()}
-                        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-zinc-100 text-zinc-700 font-medium text-xs transition-colors cursor-pointer border border-zinc-200"
-                      >
-                        <Printer className="w-3.5 h-3.5 text-zinc-600" />
-                        <span>Imprimir</span>
-                      </button>
-                    </div>
-
-                    <div className="pt-2">
-                      <button
-                        type="button"
-                        onClick={handleCloseModal}
-                        className="text-xs text-zinc-500 hover:text-zinc-800 underline underline-offset-4 cursor-pointer"
-                      >
-                        Concluir e voltar à loja
-                      </button>
-                    </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleCloseModal}
+                      className="inline-flex h-10 items-center text-sm font-semibold text-zinc-600 underline-offset-4 hover:text-[#0A2540] hover:underline focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
+                    >
+                      Voltar para a loja
+                    </button>
                   </div>
                 </div>
               )}
-            </>
-
+            </div>
+          </motion.div>
         </div>
-      </div>
-    </div>
+      )}
+    </AnimatePresence>
   );
 };
+
+const inputBase =
+  'h-12 w-full rounded-2xl bg-white px-4 text-base text-zinc-900 ring-1 ring-inset ring-zinc-300 placeholder:text-zinc-500 outline-none transition-shadow focus:ring-2 focus:ring-[#0A2540]';
+const errorRing = 'ring-2 ring-rose-600 focus:ring-rose-600';
+
+const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+const Field: React.FC<{ id: string; label: string; optional?: boolean; error?: string; help?: string; className?: string; children: React.ReactNode }> = ({
+  id, label, optional, error, help, className, children
+}) => (
+  <div className={cn('flex flex-col gap-2', className)}>
+    <label htmlFor={id} className="text-sm font-medium leading-5 text-zinc-800">
+      {label} {optional && <span className="font-normal text-zinc-600">(opcional)</span>}
+    </label>
+    {children}
+    {help && !error && <p className="text-sm leading-5 text-zinc-600" aria-live="polite">{help}</p>}
+    {error && <p id={`${id}-error`} className="text-sm leading-5 text-rose-700">{error}</p>}
+  </div>
+);

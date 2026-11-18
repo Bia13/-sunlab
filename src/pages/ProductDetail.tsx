@@ -1,33 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router';
-import {
-  ShoppingBag,
-  ArrowRight,
-  Check,
-  Sparkles,
-  ChevronRight
-} from 'lucide-react';
+import { ShoppingBag, ChevronRight, Clock, MessageCircle, Minus, Plus, Check, PackageOpen } from 'lucide-react';
 import { useProducts } from '@/context/ProductContext';
 import { useCart } from '@/context/CartContext';
 import { ProductCard } from '@/components/ProductCard';
+import { ButtonWithIcon } from '@/components/ui/button-with-icon';
+import { flyToCart } from '@/lib/fly-to-cart';
+import { cn } from '@/lib/utils';
+import { imageIndexForColor } from '@/lib/color-image';
+
+/*
+ * Página de produto no design da SunLab:
+ * - Galeria (foto grande quadrada + miniaturas + selos iguais aos do card) e painel de compra
+ *   que fica preso na tela no desktop (categoria, nome em título leve, preço, cores, quantidade,
+ *   "Adicionar ao carrinho" com a foto voando até o carrinho, "Comprar agora", prazo e pagamento).
+ * - Detalhes em sanfona (descrição e especificações). Só aparecem campos com dado real.
+ * - Relacionados numa faixa "mar"; barra de compra marinho presa embaixo no celular.
+ * - Sem estrelas/avaliações: o site não tem avaliações reais.
+ * - Grid de 4px; contraste ≥ 4,5:1; alvos ≥ 44px.
+ */
+
+type KitItem = { name: string; qty?: number };
+
+const SPEC_LABELS: Record<string, string> = {
+  material: 'Material',
+  finish: 'Acabamento',
+  dimensions: 'Dimensões',
+  weight: 'Peso',
+  layerHeight: 'Altura de camada',
+  infill: 'Preenchimento'
+};
 
 export const ProductDetail: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const { products } = useProducts();
   const { addToCart, openCheckout } = useCart();
+  const imageRef = useRef<HTMLImageElement>(null);
 
   const product = products.find(p => p.slug === slug || p.id === slug);
 
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [imageIndex, setImageIndex] = useState(0);
   const [selectedColor, setSelectedColor] = useState(product?.colors[0]);
   const [selectedSize, setSelectedSize] = useState<string | undefined>(product?.sizes?.[0]);
   const [quantity, setQuantity] = useState(1);
-  const [addedToast, setAddedToast] = useState(false);
+  const [added, setAdded] = useState(false);
+  const [openSection, setOpenSection] = useState<string | null>('descricao');
 
   useEffect(() => {
-    window.scrollTo(0, 0);
     if (product) {
-      setActiveImageIndex(0);
+      setImageIndex(0);
       setSelectedColor(product.colors[0]);
       setSelectedSize(product.sizes?.[0]);
       setQuantity(1);
@@ -36,23 +57,54 @@ export const ProductDetail: React.FC = () => {
 
   if (!product) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-20 text-center space-y-4">
-        <h2 className="text-2xl font-bold text-zinc-900">Produto não encontrado</h2>
-        <p className="text-zinc-500 text-sm">O produto que você procura não está mais disponível ou mudou de endereço.</p>
-        <Link
-          to="/catalog"
-          className="inline-block px-5 py-2.5 rounded-xl bg-zinc-200 hover:bg-zinc-300 text-zinc-900 border border-zinc-300 font-semibold text-xs"
-        >
-          Voltar ao Catálogo
-        </Link>
-      </div>
+      <section className="bg-[#F6F1E7] py-24">
+        <div className="mx-auto flex max-w-xl flex-col items-center px-4 text-center">
+          <PackageOpen aria-hidden="true" className="h-10 w-10 text-zinc-500" />
+          <h1 className="mt-6 font-display text-[32px] font-light leading-10 tracking-tight text-[#0A2540]">Produto não encontrado</h1>
+          <p className="mt-3 text-base leading-6 text-zinc-600">Esta peça não está mais disponível ou mudou de endereço.</p>
+          <ButtonWithIcon to="/catalog" variant="dark" className="mt-8">Voltar para a loja</ButtonWithIcon>
+        </div>
+      </section>
     );
   }
 
+  // Cor e foto andam juntas (ver src/lib/color-image.ts).
+  const chooseColor = (col: (typeof product.colors)[number]) => {
+    setSelectedColor(col);
+    const idx = imageIndexForColor(product, col.name);
+    if (idx >= 0) setImageIndex(idx);
+  };
+  const chooseImage = (i: number) => {
+    setImageIndex(i);
+    const col = product.colors[i];
+    if (col && imageIndexForColor(product, col.name) === i) setSelectedColor(col);
+  };
+
+  const hasPrice = product.price > 0;
+  const formatPrice = (v: number) => v.toFixed(2).replace('.', ',');
+  const mainImage = selectedColor?.image || product.images[imageIndex] || product.images[0];
+
+  const discount =
+    product.originalPrice && product.originalPrice > product.price
+      ? Math.round((1 - product.price / product.originalPrice) * 100)
+      : 0;
+  const badges = [
+    discount > 0 && { label: `−${discount}%`, tone: 'bg-[#0A2540] text-white' },
+    product.bestseller && { label: 'Mais vendido', tone: 'bg-white/92 text-[#0A2540] ring-1 ring-inset ring-black/8 backdrop-blur-sm' },
+    product.newArrival && { label: 'Lançamento', tone: 'bg-white/92 text-[#0A2540] ring-1 ring-inset ring-black/8 backdrop-blur-sm' },
+    product.category === 'custom' && { label: 'Sob medida', tone: 'bg-white/92 text-[#0A2540] ring-1 ring-inset ring-black/8 backdrop-blur-sm' }
+  ].filter(Boolean) as { label: string; tone: string }[];
+
+  const specs = Object.entries(SPEC_LABELS)
+    .map(([key, label]) => ({ label, value: (product.specs as unknown as Record<string, unknown>)?.[key] }))
+    .filter((s): s is { label: string; value: string } => typeof s.value === 'string' && s.value.trim() !== '');
+  const kitItems = (product.specs as unknown as { kitItems?: KitItem[] })?.kitItems ?? [];
+
   const handleAddToCart = () => {
     addToCart(product, quantity, selectedColor, selectedSize);
-    setAddedToast(true);
-    setTimeout(() => setAddedToast(false), 2000);
+    flyToCart(imageRef.current, mainImage);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1800);
   };
 
   const handleBuyNow = () => {
@@ -60,277 +112,300 @@ export const ProductDetail: React.FC = () => {
     openCheckout();
   };
 
-  const relatedProducts = products.filter(p => p.category === product.category && p.id !== product.id).slice(0, 4);
+  const related = products.filter(p => p.category === product.category && p.id !== product.id).slice(0, 4);
+
+  const sections = [
+    { id: 'descricao', title: 'Descrição', content: <p className="whitespace-pre-line">{product.description || product.tagline}</p> },
+    ...(specs.length
+      ? [{
+          id: 'especificacoes',
+          title: 'Especificações',
+          content: (
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+              {specs.map(s => (
+                <div key={s.label}>
+                  <dt className="text-xs font-semibold uppercase leading-4 tracking-[0.12em] text-zinc-600">{s.label}</dt>
+                  <dd className="mt-1 text-zinc-900">{s.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )
+        }]
+      : []),
+    ...(kitItems.length
+      ? [{
+          id: 'kit',
+          title: 'Peças inclusas no kit',
+          content: (
+            <ul className="flex flex-col gap-2">
+              {kitItems.map((item, i) => (
+                <li key={i} className="flex items-center gap-3">
+                  <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                  <span>{item.qty && item.qty > 1 ? <strong className="text-zinc-900">{item.qty}x </strong> : null}{item.name}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        }]
+      : [])
+  ];
+
+  const quantityControl = (
+    <div className="flex h-12 items-center rounded-full bg-white ring-1 ring-inset ring-zinc-300" role="group" aria-label="Quantidade">
+      <button
+        type="button"
+        onClick={() => setQuantity(q => Math.max(1, q - 1))}
+        aria-label="Diminuir quantidade"
+        className="grid h-12 w-11 place-items-center rounded-l-full text-zinc-700 hover:text-[#0A2540] focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
+      >
+        <Minus aria-hidden="true" className="h-4 w-4" />
+      </button>
+      <span aria-live="polite" className="w-8 text-center text-base font-semibold text-zinc-900">{quantity}</span>
+      <button
+        type="button"
+        onClick={() => setQuantity(q => q + 1)}
+        aria-label="Aumentar quantidade"
+        className="grid h-12 w-11 place-items-center rounded-r-full text-zinc-700 hover:text-[#0A2540] focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
+      >
+        <Plus aria-hidden="true" className="h-4 w-4" />
+      </button>
+    </div>
+  );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-16">
-      
-      {/* Breadcrumb Navigation */}
-      <nav className="flex items-center gap-2 text-xs text-zinc-500">
-        <Link to="/" className="hover:text-zinc-800 transition-colors">Início</Link>
-        <ChevronRight className="w-3.5 h-3.5" />
-        <Link to="/catalog" className="hover:text-zinc-800 transition-colors">Loja</Link>
-        <ChevronRight className="w-3.5 h-3.5" />
-        <Link to={`/catalog?cat=${product.category}`} className="hover:text-zinc-800 transition-colors">
-          {product.categoryLabel}
-        </Link>
-        <ChevronRight className="w-3.5 h-3.5" />
-        <span className="text-zinc-800 font-semibold truncate max-w-[200px]">{product.name}</span>
-      </nav>
+    <div className="flex w-full flex-col overflow-x-clip pb-24 md:pb-0">
+      {/* 1. Produto */}
+      <section aria-labelledby="produto-title" className="bg-white py-8 sm:py-12">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          {/* Caminho */}
+          <nav aria-label="Você está em" className="mb-6 sm:mb-8">
+            <ol className="flex flex-wrap items-center gap-2 text-sm leading-5 text-zinc-600">
+              <li><Link to="/" className="hover:text-[#0A2540] hover:underline underline-offset-4">Início</Link></li>
+              <li aria-hidden="true"><ChevronRight className="h-4 w-4" /></li>
+              <li><Link to="/catalog" className="hover:text-[#0A2540] hover:underline underline-offset-4">Loja</Link></li>
+              <li aria-hidden="true"><ChevronRight className="h-4 w-4" /></li>
+              <li><Link to={`/catalog?cat=${product.category}`} className="hover:text-[#0A2540] hover:underline underline-offset-4">{product.categoryLabel}</Link></li>
+              <li aria-hidden="true"><ChevronRight className="h-4 w-4" /></li>
+              <li aria-current="page" className="max-w-[200px] truncate font-semibold text-zinc-900">{product.name}</li>
+            </ol>
+          </nav>
 
-      {/* Main Product Info & Media Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
-        
-        {/* Gallery Section */}
-        <div className="lg:col-span-7 space-y-4">
-          <div className="relative aspect-4/3 w-full rounded-2xl overflow-hidden bg-zinc-100 border border-zinc-200 shadow-xs">
-            <img
-              src={product.images[activeImageIndex] || product.images[0]}
-              alt={product.name}
-              className="w-full h-full object-cover transition-all duration-500"
-            />
-            {product.bestseller && (
-              <span className="absolute top-4 left-4 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/95 text-zinc-700 border border-zinc-200 shadow-xs backdrop-blur-md">
-                <Sparkles className="w-3.5 h-3.5 text-zinc-500" /> Mais Vendido
-              </span>
-            )}
+          <div className="grid items-start gap-8 lg:grid-cols-12 lg:gap-16">
+            {/* Galeria */}
+            <div className="lg:col-span-7">
+              <div className="relative aspect-square overflow-hidden rounded-3xl bg-gradient-to-b from-[#E7E5E0] to-[#F5F4F1]">
+                <img ref={imageRef} key={mainImage} src={mainImage} alt={product.name} className="h-full w-full object-cover" />
+                {badges.length > 0 && (
+                  <div className="absolute left-4 top-4 flex flex-wrap gap-2">
+                    {badges.slice(0, 2).map(b => (
+                      <span key={b.label} className={cn('rounded-full px-3 py-1 text-xs font-medium leading-4 tabular-nums', b.tone)}>{b.label}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {product.images.length > 1 && !selectedColor?.image && (
+                <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
+                  {product.images.map((img, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => chooseImage(i)}
+                      aria-label={`Ver foto ${i + 1} de ${product.images.length}`}
+                      aria-current={imageIndex === i ? 'true' : undefined}
+                      className={cn(
+                        'h-20 w-20 shrink-0 overflow-hidden rounded-2xl ring-2 transition-[box-shadow,opacity] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540] sm:h-24 sm:w-24',
+                        imageIndex === i ? 'ring-[#0A2540]' : 'opacity-72 ring-transparent hover:opacity-100'
+                      )}
+                    >
+                      <img src={img} alt="" className="h-full w-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Painel de compra */}
+            <div className="lg:sticky lg:top-24 lg:col-span-5">
+              <p className="text-xs font-semibold uppercase leading-4 tracking-[0.16em] text-zinc-600">{product.categoryLabel}</p>
+              <h1 id="produto-title" className="mt-3 font-display text-[32px] font-light leading-10 tracking-tight text-[#0A2540] sm:text-[40px] sm:leading-[48px]">
+                {product.name}
+              </h1>
+              {/* Resumo só aparece se não repetir a descrição (vários produtos têm o mesmo texto nos dois campos). */}
+              {product.tagline && !(product.description || '').trim().startsWith(product.tagline.trim().slice(0, 40)) && (
+                <p className="mt-4 text-base leading-6 text-zinc-600">{product.tagline}</p>
+              )}
+
+              {/* Preço */}
+              <div className="mt-6 border-t border-zinc-200 pt-6">
+                {hasPrice ? (
+                  <>
+                    <p className="flex items-baseline gap-3">
+                      <span className="font-display text-[40px] font-light leading-[48px] text-zinc-900">R$ {formatPrice(product.price)}</span>
+                      {discount > 0 && (
+                        <span className="text-base text-zinc-600 line-through">
+                          <span className="sr-only">de </span>R$ {formatPrice(product.originalPrice!)}
+                        </span>
+                      )}
+                    </p>
+                  </>
+                ) : (
+                  <p className="font-display text-[32px] font-light leading-10 text-zinc-900">Sob orçamento</p>
+                )}
+              </div>
+
+              {/* Cores */}
+              {product.colors.length > 1 && (
+                <div className="mt-6">
+                  <p className="text-sm leading-5 text-zinc-700">
+                    Cor: <strong className="font-semibold text-zinc-900">{selectedColor?.name}</strong>
+                  </p>
+                  <div role="group" aria-label="Cores disponíveis" className="mt-3 flex flex-wrap gap-2">
+                    {product.colors.map(col => {
+                      const active = selectedColor?.name === col.name;
+                      return (
+                        <button
+                          key={col.name}
+                          type="button"
+                          onClick={() => chooseColor(col)}
+                          aria-label={`Cor ${col.name}`}
+                          aria-pressed={active}
+                          className="grid h-11 w-11 place-items-center rounded-full cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540]"
+                        >
+                          <span
+                            className={cn('h-8 w-8 rounded-full ring-1 ring-inset ring-black/12', active && 'shadow-[0_0_0_2px_#fff,0_0_0_4px_#0A2540]')}
+                            style={{ backgroundColor: col.hex }}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Ações */}
+              <div className="mt-8 flex flex-col gap-3">
+                {hasPrice ? (
+                  <>
+                    <div className="flex gap-3">
+                      {quantityControl}
+                      <ButtonWithIcon onClick={handleAddToCart} icon={added ? Check : ShoppingBag} className="flex-1">
+                        {added ? 'Adicionado' : 'Adicionar ao carrinho'}
+                      </ButtonWithIcon>
+                    </div>
+                    <ButtonWithIcon onClick={handleBuyNow} variant="dark" className="w-full">Comprar agora</ButtonWithIcon>
+                  </>
+                ) : (
+                  <ButtonWithIcon to="/custom" variant="dark" className="w-full">Pedir orçamento desta peça</ButtonWithIcon>
+                )}
+                <span role="status" className="sr-only">{added ? `${product.name} adicionado ao carrinho` : ''}</span>
+              </div>
+
+              {/* Prazo e pagamento */}
+              <ul className="mt-6 flex flex-col gap-3 rounded-2xl bg-[#F6F1E7] p-4">
+                {product.leadTime && (
+                  <li className="flex items-center gap-3 text-sm leading-5 text-zinc-800">
+                    <Clock aria-hidden="true" className="h-5 w-5 shrink-0 text-[#0A2540]" />
+                    <span>Prazo de produção: <strong className="font-semibold">{product.leadTime}</strong></span>
+                  </li>
+                )}
+                <li className="flex items-center gap-3 text-sm leading-5 text-zinc-800">
+                  <MessageCircle aria-hidden="true" className="h-5 w-5 shrink-0 text-[#0A2540]" />
+                  <span>Pagamento e entrega combinados pelo WhatsApp</span>
+                </li>
+              </ul>
+
+              {/* Detalhes em sanfona */}
+              <div className="mt-8 border-t border-zinc-200">
+                {sections.map(s => {
+                  const open = openSection === s.id;
+                  return (
+                    <div key={s.id} className="border-b border-zinc-200">
+                      <h2>
+                        <button
+                          type="button"
+                          onClick={() => setOpenSection(open ? null : s.id)}
+                          aria-expanded={open}
+                          aria-controls={`sec-${s.id}`}
+                          className="flex min-h-14 w-full items-center justify-between gap-4 py-4 text-left text-base font-semibold leading-6 text-zinc-900 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540]"
+                        >
+                          {s.title}
+                          <span
+                            aria-hidden="true"
+                            className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-full transition-[transform,background-color] duration-300 motion-reduce:transition-none', open ? 'rotate-45 bg-amber-400 text-[#061A30]' : 'bg-zinc-100 text-[#0A2540]')}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </span>
+                        </button>
+                      </h2>
+                      <div
+                        id={`sec-${s.id}`}
+                        className={cn('grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none', open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0')}
+                      >
+                        <div className="overflow-hidden" inert={!open}>
+                          <div className="pb-6 text-base leading-6 text-zinc-700">{s.content}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
+        </div>
+      </section>
 
-          {/* Thumbnails */}
-          {product.images.length > 1 && (
-            <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-2 scrollbar-none">
-              {product.images.map((img, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setActiveImageIndex(idx)}
-                  className={`w-16 h-16 sm:w-24 sm:h-24 rounded-lg sm:rounded-xl overflow-hidden border-2 transition-all shrink-0 cursor-pointer ${
-                    activeImageIndex === idx
-                      ? 'border-blue-600 ring-2 ring-blue-300 scale-95'
-                      : 'border-zinc-200 opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  <img src={img} alt="thumbnail" className="w-full h-full object-cover" />
-                </button>
+      {/* 2. Relacionados (mar) */}
+      {related.length > 0 && (
+        <section aria-labelledby="relacionados-title" className="bg-[#EAF3F9] py-16 sm:py-24">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="mb-8 flex flex-col gap-6 sm:mb-12 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-zinc-600">
+                  <span aria-hidden="true" className="h-px w-6 bg-amber-500" />
+                  Da mesma coleção
+                </p>
+                <h2 id="relacionados-title" className="mt-4 font-display text-[40px] font-light leading-[44px] tracking-tight text-[#0A2540] sm:text-5xl sm:leading-[52px]">
+                  <span className="block">Você também</span>
+                  <span className="block text-amber-700">pode gostar.</span>
+                </h2>
+              </div>
+              <ButtonWithIcon to={`/catalog?cat=${product.category}`} variant="outline">Ver a coleção</ButtonWithIcon>
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:gap-6 lg:grid-cols-4">
+              {related.map(rel => (
+                <div key={rel.id} className="flex"><ProductCard product={rel} /></div>
               ))}
             </div>
-          )}
-        </div>
-
-        {/* Product Purchase Actions & Specs */}
-        <div className="lg:col-span-5 space-y-6">
-          <div>
-            <h1 className="text-3xl font-extrabold text-zinc-900 tracking-tight font-display">
-              {product.name}
-            </h1>
-            <p className="text-sm text-zinc-600 mt-2 leading-relaxed">
-              {product.description || product.tagline}
-            </p>
           </div>
-
-          {/* Lista de peças inclusas (quando for um Kit) */}
-          {Array.isArray((product.specs as any)?.kitItems) && (product.specs as any).kitItems.length > 0 && (
-            <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2">
-              <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                Peças inclusas no kit:
-              </h3>
-              <ul className="space-y-1.5 text-sm text-zinc-700">
-                {(product.specs as any).kitItems.map((item: { name: string; qty?: number }, idx: number) => (
-                  <li key={idx} className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
-                    <span>
-                      {item.qty && item.qty > 1 ? <strong className="text-zinc-900">{item.qty}x </strong> : null}
-                      {item.name}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Price Box */}
-          <div className="p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2">
-            {product.price > 0 ? (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-2.5">
-                  <div className="flex items-baseline gap-2.5 whitespace-nowrap">
-                    <span className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight whitespace-nowrap inline-flex items-baseline">
-                      <span className="mr-1">R$</span>
-                      <span>{product.price.toFixed(2).replace('.', ',')}</span>
-                    </span>
-                    {product.originalPrice && (
-                      <span className="text-sm text-zinc-400 line-through whitespace-nowrap inline-flex items-baseline">
-                        <span className="mr-1">R$</span>
-                        <span>{product.originalPrice.toFixed(2).replace('.', ',')}</span>
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-300 shrink-0 whitespace-nowrap">
-                    Pagamento via WhatsApp
-                  </span>
-                </div>
-                <p className="text-xs text-emerald-700 font-medium">
-                  Atendimento direto e confirmação imediata do seu pedido
-                </p>
-              </>
-            ) : (
-              <div>
-                <span className="text-xl font-bold text-zinc-900">
-                  Projeto Sob Medida
-                </span>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Orçamento personalizado para a sua ideia
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Color Selection - Exibido apenas se o admin cadastrou cores */}
-          {product.colors && product.colors.length > 0 && (
-            <div className="space-y-2">
-              <label className="block text-xs font-medium text-zinc-700">
-                Cor: <strong className="text-zinc-900">{selectedColor?.name || product.colors[0]?.name}</strong>
-              </label>
-              <div className="flex flex-wrap gap-2.5">
-                {product.colors.map(col => (
-                  <button
-                    key={col.name}
-                    type="button"
-                    onClick={() => setSelectedColor(col)}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
-                      selectedColor?.name === col.name
-                        ? 'bg-zinc-100 border-zinc-700 text-zinc-900 ring-1 ring-zinc-500'
-                        : 'bg-white border-zinc-200 text-zinc-600 hover:text-zinc-900'
-                    }`}
-                  >
-                    <span
-                      className="w-3.5 h-3.5 rounded-full border border-zinc-300"
-                      style={{ backgroundColor: col.hex }}
-                    />
-                    <span>{col.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Purchase CTA Buttons - Gray and White */}
-          <div className="space-y-3 pt-2">
-            {product.price > 0 ? (
-              <>
-                <div className="flex gap-3">
-                  {/* Quantity */}
-                  <div className="flex items-center border border-zinc-200 rounded-xl bg-zinc-50 px-3">
-                    <button
-                      onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                      className="py-2 text-zinc-600 hover:text-zinc-950 font-bold cursor-pointer px-1"
-                    >
-                      -
-                    </button>
-                    <span className="px-3 text-sm font-semibold text-zinc-900 min-w-[24px] text-center">
-                      {quantity}
-                    </span>
-                    <button
-                      onClick={() => setQuantity(quantity + 1)}
-                      className="py-2 text-zinc-600 hover:text-zinc-950 font-bold cursor-pointer px-1"
-                    >
-                      +
-                    </button>
-                  </div>
-
-                  <button
-                    onClick={handleAddToCart}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                      addedToast
-                        ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                        : 'bg-zinc-200 text-blue-950 hover:bg-zinc-300 border border-zinc-300'
-                    }`}
-                  >
-                    {addedToast ? (
-                      <>
-                        <Check className="w-4 h-4 text-blue-700" />
-                        <span>Adicionado ao Carrinho!</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShoppingBag className="w-4 h-4 text-blue-700" />
-                        <span>Adicionar ao Carrinho</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <button
-                  onClick={handleBuyNow}
-                  className="w-full flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl bg-zinc-200 hover:bg-zinc-300 text-blue-950 border border-zinc-300 text-sm font-semibold transition-all shadow-xs cursor-pointer"
-                >
-                  <span>Comprar Agora com 1 Clique</span>
-                  <ArrowRight className="w-4 h-4 text-blue-700" />
-                </button>
-              </>
-            ) : (
-              <Link
-                to="/custom"
-                className="w-full flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl bg-zinc-200 hover:bg-zinc-300 text-blue-950 border border-zinc-300 text-sm font-semibold transition-all shadow-xs cursor-pointer"
-              >
-                <span>Solicitar Orçamento Deste Projeto</span>
-                <ArrowRight className="w-4 h-4 text-blue-700" />
-              </Link>
-            )}
-          </div>
-
-        </div>
-      </div>
-
-
-
-      {/* Related Products Carousel / Grid */}
-      {relatedProducts.length > 0 && (
-        <div className="pt-12 border-t border-zinc-200 space-y-6 pb-16 md:pb-0">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xl sm:text-2xl font-bold text-zinc-900 font-display">
-              Você também pode gostar
-            </h3>
-            <Link to="/catalog" className="text-xs font-semibold text-blue-600 hover:text-blue-800">
-              Ver mais na loja →
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-            {relatedProducts.map(rel => (
-              <ProductCard key={rel.id} product={rel} />
-            ))}
-          </div>
-        </div>
+        </section>
       )}
 
-      {/* Mobile Sticky Buy Bar */}
-      {product.price > 0 && (
-        <div className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-zinc-200 px-4 py-2.5 flex items-center justify-between gap-3 shadow-2xl safe-area-bottom">
+      {/* Barra de compra no celular */}
+      {hasPrice && (
+        <div className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-between gap-3 bg-[#061A30] px-4 py-3 text-white shadow-[0_-8px_24px_rgba(6,26,48,0.24)] md:hidden">
           <div className="min-w-0">
-            <span className="text-[10px] text-zinc-400 block font-medium">Preço à vista</span>
-            <div className="text-base font-extrabold text-zinc-900 tracking-tight whitespace-nowrap inline-flex items-baseline">
-              <span className="mr-1">R$</span>
-              <span>{(product.price * quantity).toFixed(2).replace('.', ',')}</span>
-            </div>
+            <span className="block text-xs leading-4 text-white/72">{quantity > 1 ? `${quantity} unidades` : 'Preço'}</span>
+            <span className="block whitespace-nowrap text-lg font-semibold leading-7">R$ {formatPrice(product.price * quantity)}</span>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex shrink-0 items-center gap-2">
             <button
+              type="button"
               onClick={handleAddToCart}
-              className="p-2.5 rounded-xl border border-zinc-300 bg-zinc-50 active:bg-zinc-100 text-zinc-700 active:scale-95 transition-all shadow-xs"
-              title="Adicionar ao Carrinho"
+              aria-label={added ? `${product.name} adicionado ao carrinho` : `Adicionar ${product.name} ao carrinho`}
+              className="grid h-12 w-12 place-items-center rounded-full bg-white/8 text-white ring-1 ring-inset ring-white/24 focus-visible:outline-2 focus-visible:outline-amber-300 cursor-pointer"
             >
-              <ShoppingBag className="w-5 h-5 text-blue-600" />
+              {added ? <Check aria-hidden="true" className="h-5 w-5 text-amber-300" /> : <ShoppingBag aria-hidden="true" className="h-5 w-5" />}
             </button>
             <button
+              type="button"
               onClick={handleBuyNow}
-              className="px-5 py-2.5 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-xs shadow-md active:scale-95 flex items-center gap-1.5 transition-all"
+              className="inline-flex h-12 items-center rounded-full bg-amber-400 px-6 text-sm font-semibold leading-5 text-[#061A30] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 cursor-pointer"
             >
-              <span>Comprar Agora</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              Comprar agora
             </button>
           </div>
         </div>
       )}
-
     </div>
   );
 };

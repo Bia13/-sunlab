@@ -1,277 +1,319 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router';
+import { motion, useReducedMotion } from 'framer-motion';
 import { Search, X, RotateCcw, PackageOpen } from 'lucide-react';
 import { CATEGORIES } from '@/data/products';
 import { useProducts } from '@/context/ProductContext';
 import { ProductCard } from '@/components/ProductCard';
+import { ProductCardSkeleton } from '@/components/ProductCardSkeleton';
+import { ButtonWithIcon } from '@/components/ui/button-with-icon';
+import { Checkbox } from '@/components/ui/custom-checkbox';
+import { DropdownSelect } from '@/components/ui/dropdown-select';
+
+/*
+ * Loja no mesmo design da Home:
+ * - Cabeçalho marinho com título editorial em dois tons e a foto de detalhe sumindo no fundo.
+ * - Filtros numa faixa areia: busca em pílula, ordenar e "Em estoque" em pílulas, categorias
+ *   em pílulas contornadas (com contagem real) e faixas de preço.
+ * - Grade numa faixa "mar" com o mesmo ProductCard e o mesmo "carregando" (esqueletos) ao trocar filtro.
+ * - Faixa final marinho com chamada para peça sob medida.
+ * Grid de 4px; alvos de toque ≥ 40px; contraste ≥ 4,5:1 em todo texto pequeno.
+ */
+
+type SortBy = 'featured' | 'price-asc' | 'price-desc' | 'name';
+type PriceRange = 'all' | 'under-150' | '150-250' | 'over-250';
+
+const SORTS: { id: SortBy; label: string }[] = [
+  { id: 'featured', label: 'Destaques SunLab' },
+  { id: 'price-asc', label: 'Menor preço' },
+  { id: 'price-desc', label: 'Maior preço' },
+  { id: 'name', label: 'Nome (A a Z)' }
+];
+
+const PRICES: { id: PriceRange; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'under-150', label: 'Até R$ 150' },
+  { id: '150-250', label: 'R$ 150 a R$ 250' },
+  { id: 'over-250', label: 'Acima de R$ 250' }
+];
+
+const WHATSAPP_URL = 'https://wa.me/5513996061681';
 
 export const Catalog: React.FC = () => {
   const { products, loading } = useProducts();
+  const reduceMotion = useReducedMotion();
   const [searchParams, setSearchParams] = useSearchParams();
   const categoryParam = searchParams.get('cat') || 'all';
 
   const [selectedCategory, setSelectedCategory] = useState<string>(categoryParam);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'featured' | 'price-asc' | 'price-desc' | 'rating' | 'name'>('featured');
-  const [priceRange, setPriceRange] = useState<'all' | 'under-150' | '150-250' | 'over-250'>('all');
+  const [sortBy, setSortBy] = useState<SortBy>('featured');
+  const [priceRange, setPriceRange] = useState<PriceRange>('all');
   const [inStockOnly, setInStockOnly] = useState(false);
 
-  // Sync category param with URL
+  // "Carregando" curto ao trocar filtro (igual à Home). A busca por texto é instantânea.
+  const [switching, setSwitching] = useState(false);
+  const switchTimer = useRef<number>(undefined);
+  useEffect(() => () => window.clearTimeout(switchTimer.current), []);
+  const withLoading = (fn: () => void) => {
+    fn();
+    if (reduceMotion) return;
+    setSwitching(true);
+    window.clearTimeout(switchTimer.current);
+    switchTimer.current = window.setTimeout(() => setSwitching(false), 480);
+  };
+
+  // Sincroniza a categoria com a URL (?cat=)
   useEffect(() => {
-    if (categoryParam) {
-      setSelectedCategory(categoryParam);
-    }
+    if (categoryParam) setSelectedCategory(categoryParam);
   }, [categoryParam]);
 
-  const handleCategoryChange = (catId: string) => {
-    setSelectedCategory(catId);
-    if (catId === 'all') {
+  const handleCategoryChange = (catId: string) =>
+    withLoading(() => {
+      setSelectedCategory(catId);
+      if (catId === 'all') {
+        searchParams.delete('cat');
+        setSearchParams(searchParams);
+      } else {
+        setSearchParams({ cat: catId });
+      }
+    });
+
+  const handleResetFilters = () =>
+    withLoading(() => {
+      setSelectedCategory('all');
+      setSearchQuery('');
+      setSortBy('featured');
+      setPriceRange('all');
+      setInStockOnly(false);
       searchParams.delete('cat');
       setSearchParams(searchParams);
-    } else {
-      setSearchParams({ cat: catId });
-    }
-  };
+    });
 
-  const handleResetFilters = () => {
-    setSelectedCategory('all');
-    setSearchQuery('');
-    setSortBy('featured');
-    setPriceRange('all');
-    setInStockOnly(false);
-    searchParams.delete('cat');
-    setSearchParams(searchParams);
-  };
+  const countFor = (catId: string) => (catId === 'all' ? products.length : products.filter(p => p.category === catId).length);
 
   const filteredProducts = useMemo(() => {
-    return products.filter(p => {
-      // Category filter
-      if (selectedCategory !== 'all' && p.category !== selectedCategory) {
-        return false;
-      }
+    return products
+      .filter(p => {
+        if (selectedCategory !== 'all' && p.category !== selectedCategory) return false;
 
-      // Search query filter
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
-        const matchesName = p.name.toLowerCase().includes(query);
-        const matchesDesc = p.description.toLowerCase().includes(query);
-        const matchesCat = p.categoryLabel.toLowerCase().includes(query);
-        const matchesMat = p.specs.material.toLowerCase().includes(query);
-        if (!matchesName && !matchesDesc && !matchesCat && !matchesMat) return false;
-      }
+        if (searchQuery.trim()) {
+          const query = searchQuery.toLowerCase();
+          const matches =
+            p.name.toLowerCase().includes(query) ||
+            p.description.toLowerCase().includes(query) ||
+            p.categoryLabel.toLowerCase().includes(query) ||
+            p.specs.material.toLowerCase().includes(query);
+          if (!matches) return false;
+        }
 
-      // Price range filter
-      if (priceRange === 'under-150' && (p.price <= 0 || p.price > 150)) return false;
-      if (priceRange === '150-250' && (p.price < 150 || p.price > 250)) return false;
-      if (priceRange === 'over-250' && p.price < 250) return false;
+        if (priceRange === 'under-150' && (p.price <= 0 || p.price > 150)) return false;
+        if (priceRange === '150-250' && (p.price < 150 || p.price > 250)) return false;
+        if (priceRange === 'over-250' && p.price < 250) return false;
 
-      // In stock filter
-      if (inStockOnly && !p.inStock) return false;
-
-      return true;
-    }).sort((a, b) => {
-      if (sortBy === 'price-asc') return a.price - b.price;
-      if (sortBy === 'price-desc') return b.price - a.price;
-      if (sortBy === 'rating') return b.rating - a.rating;
-      if (sortBy === 'name') return a.name.localeCompare(b.name);
-      return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
-    });
+        if (inStockOnly && !p.inStock) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'price-asc') return a.price - b.price;
+        if (sortBy === 'price-desc') return b.price - a.price;
+        if (sortBy === 'name') return a.name.localeCompare(b.name);
+        return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
+      });
   }, [products, selectedCategory, searchQuery, sortBy, priceRange, inStockOnly]);
 
   const hasActiveFilters = selectedCategory !== 'all' || searchQuery !== '' || priceRange !== 'all' || inStockOnly;
+  const showSkeleton = (loading && products.length === 0) || switching;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-8">
-      
-      {/* Page Header */}
-      <div className="space-y-3">
-        <div className="text-xs font-bold uppercase tracking-wider text-blue-600">
-          Loja & Coleções Exclusivas
+    <div className="flex w-full flex-col overflow-x-clip">
+      {/* 1. Cabeçalho marinho */}
+      <section aria-labelledby="loja-title" className="relative isolate overflow-hidden bg-[#061A30] text-white">
+        {/* Foto na metade direita, sumindo com máscara (a própria imagem fica transparente à
+            esquerda), então não existe borda para aparecer como emenda. */}
+        <div aria-hidden="true" className="absolute inset-y-0 right-0 -z-10 hidden w-3/5 lg:block">
+          <img
+            src="/products/natal/04_flocos_neve/03_macro_textura.jpg"
+            alt=""
+            className="h-full w-full object-cover opacity-64 [mask-image:linear-gradient(to_right,transparent_0%,rgba(0,0,0,0.5)_40%,black_75%)]"
+          />
         </div>
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-blue-950 tracking-tight font-display">
-              Catálogo de Produtos
-            </h1>
-            <p className="text-sm text-zinc-500 mt-1 max-w-xl">
-              Peças de design autoral, utilitários elegantes e coleções exclusivas feitas para você.
-            </p>
-          </div>
-          <span className="text-xs font-medium px-3.5 py-1.5 rounded-full bg-white border border-zinc-200 text-zinc-600 shadow-xs self-start sm:self-auto shrink-0">
-            Exibindo <strong className="text-zinc-900">{filteredProducts.length}</strong> de <strong className="text-zinc-900">{products.length}</strong> produtos
-          </span>
+        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
+          <p className="flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-amber-300">
+            <span aria-hidden="true" className="h-px w-6 bg-amber-300" />
+            Loja
+          </p>
+          <h1 id="loja-title" className="mt-4 font-display text-[40px] font-light leading-[44px] tracking-tight sm:text-5xl sm:leading-[52px] lg:text-[64px] lg:leading-[68px]">
+            <span className="block">Tudo que a gente</span>
+            <span className="block text-amber-300">imprime.</span>
+          </h1>
+          <p className="mt-6 max-w-md text-base leading-6 text-white/80 lg:text-lg lg:leading-7">
+            Peças de design autoral, decoração e presentes impressos em 3D em Santos.
+          </p>
         </div>
-      </div>
+      </section>
 
-      {/* Filter and Search Controls - White & Gray */}
-      <div className="p-4 rounded-2xl bg-white border border-zinc-200 shadow-xs space-y-4">
-        
-        {/* Top Controls: Search & Sort */}
-        <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
-          {/* Search Input */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Pesquisar por nome, categoria ou material..."
-              className="w-full bg-zinc-50 border border-zinc-200 rounded-xl pl-10 pr-10 py-2.5 text-xs text-zinc-900 placeholder-zinc-400 outline-none focus:bg-white focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 transition-all"
+      {/* 2. Filtros (faixa areia) */}
+      <section aria-label="Filtros" className="bg-[#F6F1E7] py-8 sm:py-12">
+        <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 sm:px-6 lg:px-8">
+          {/* Tudo numa linha (desktop): busca, Categoria, Preço, Ordenar, Em estoque e Limpar.
+              No celular: busca em cima e os filtros em duas colunas embaixo. */}
+          <div className="grid grid-cols-2 gap-3 lg:flex lg:items-center">
+            <div className="col-span-2 flex h-12 min-w-0 items-center gap-2 rounded-full bg-white pl-4 pr-1 ring-1 ring-inset ring-zinc-300 transition-shadow focus-within:ring-2 focus-within:ring-[#0A2540] lg:flex-1">
+              <Search aria-hidden="true" className="h-5 w-5 shrink-0 text-zinc-500" />
+              <label htmlFor="busca-loja" className="sr-only">Buscar na loja</label>
+              <input
+                id="busca-loja"
+                type="search"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Buscar por nome, categoria ou material"
+                className="h-full min-w-0 flex-1 bg-transparent text-base text-zinc-900 placeholder:text-zinc-500 outline-none [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Limpar busca"
+                  className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Categoria (com contagem real de produtos) */}
+            <DropdownSelect
+              label="Categoria"
+              value={selectedCategory}
+              onChange={v => handleCategoryChange(v)}
+              options={CATEGORIES.map(c => ({ value: c.id as string, label: c.id === 'all' ? 'Todas' : c.name, hint: countFor(c.id) }))}
+              className="lg:shrink-0"
             />
-            {searchQuery && (
+
+            <DropdownSelect
+              label="Preço"
+              value={priceRange}
+              onChange={v => withLoading(() => setPriceRange(v))}
+              options={PRICES.map(p => ({ value: p.id, label: p.label }))}
+              align="right"
+              className="lg:shrink-0"
+            />
+
+            <DropdownSelect
+              label="Ordenar"
+              value={sortBy}
+              onChange={v => withLoading(() => setSortBy(v))}
+              options={SORTS.map(o => ({ value: o.id, label: o.label }))}
+              align="right"
+              className="lg:shrink-0"
+            />
+
+            {/* "Em estoque": checkbox de verdade dentro de uma pílula (o rótulo inteiro é clicável). */}
+            <label className="inline-flex h-12 shrink-0 cursor-pointer items-center justify-center gap-3 rounded-full bg-white px-5 text-sm leading-5 text-zinc-800 ring-1 ring-inset ring-zinc-300 transition-colors hover:ring-[#0A2540]">
+              <Checkbox checked={inStockOnly} onChange={e => withLoading(() => setInStockOnly(e.target.checked))} />
+              Em estoque
+            </label>
+
+            {hasActiveFilters && (
               <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+                type="button"
+                onClick={handleResetFilters}
+                aria-label="Limpar filtros"
+                title="Limpar filtros"
+                className="col-span-2 inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-full px-4 text-sm font-semibold text-zinc-700 transition-colors hover:bg-white hover:text-[#0A2540] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540] cursor-pointer lg:col-span-1 lg:w-12 lg:px-0"
               >
-                <X className="w-3.5 h-3.5" />
+                <RotateCcw aria-hidden="true" className="h-4 w-4" />
+                <span className="lg:sr-only">Limpar filtros</span>
               </button>
             )}
           </div>
+        </div>
+      </section>
 
-          {/* Sort Selector & Quick Toggles */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-xs text-zinc-600">
-              <span className="hidden sm:inline">Ordenar:</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-xs text-zinc-800 outline-none focus:border-zinc-400 cursor-pointer"
-              >
-                <option value="featured">Destaques SunLab</option>
-                <option value="price-asc">Menor Preço</option>
-                <option value="price-desc">Maior Preço</option>
-                <option value="name">Nome (A - Z)</option>
-              </select>
+      {/* 3. Resultados (faixa mar) */}
+      <section aria-label="Produtos" className="bg-[#EAF3F9] py-12 sm:py-16">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <p role="status" className="mb-6 text-sm leading-5 text-zinc-600 sm:mb-8">
+            {showSkeleton ? (
+              'Carregando produtos'
+            ) : (
+              <>
+                Mostrando <strong className="font-semibold text-zinc-900">{filteredProducts.length}</strong> de{' '}
+                <strong className="font-semibold text-zinc-900">{products.length}</strong> produtos
+              </>
+            )}
+          </p>
+
+          {showSkeleton ? (
+            // Mesmo número de esqueletos que de cards que vão aparecer: a grade não pula de altura.
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 sm:gap-6" aria-busy="true">
+              {[...Array(Math.max(1, switching ? filteredProducts.length : 8))].map((_, i) => (
+                <ProductCardSkeleton key={i} />
+              ))}
             </div>
-
-            <label className="flex items-center gap-2 text-xs text-blue-800 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={inStockOnly}
-                onChange={(e) => setInStockOnly(e.target.checked)}
-                className="rounded border-zinc-300 text-blue-600 focus:ring-0 cursor-pointer"
-              />
-              <span>Em estoque</span>
-            </label>
-          </div>
-        </div>
-
-        {/* Categories Bar (Mobile Horizontal Swipe) */}
-        <div className="pt-2 border-t border-zinc-100 flex items-center gap-1.5 sm:gap-2 overflow-x-auto whitespace-nowrap pb-1.5 scrollbar-none">
-          <span className="text-[11px] uppercase font-bold text-blue-500 mr-1 shrink-0">Categorias:</span>
-          {CATEGORIES.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => handleCategoryChange(cat.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer shrink-0 ${
-                selectedCategory === cat.id
-                  ? 'bg-blue-600 text-white font-bold shadow-xs'
-                  : 'bg-zinc-100 text-zinc-700 hover:text-zinc-900 hover:bg-zinc-200'
-              }`}
-            >
-              {cat.name}
-            </button>
-          ))}
-        </div>
-
-        {/* Secondary Filters (Price Range & Reset) */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-xs text-zinc-600">
-          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto whitespace-nowrap pb-1 scrollbar-none">
-            <span className="text-[11px] uppercase font-bold text-zinc-400 mr-1 shrink-0">Preço:</span>
-            {[
-              { id: 'all', label: 'Todos' },
-              { id: 'under-150', label: 'Até R$ 150' },
-              { id: '150-250', label: 'R$ 150 a R$ 250' },
-              { id: 'over-250', label: 'Acima de R$ 250' }
-            ].map(range => (
-              <button
-                key={range.id}
-                onClick={() => setPriceRange(range.id as any)}
-                className={`px-2.5 py-1 rounded-lg text-xs transition-colors cursor-pointer shrink-0 ${
-                  priceRange === range.id
-                    ? 'bg-zinc-900 text-white font-bold'
-                    : 'bg-zinc-100 text-zinc-600 hover:text-zinc-900'
-                }`}
-              >
-                {range.label}
-              </button>
-            ))}
-          </div>
-
-          {hasActiveFilters && (
-            <button
-              onClick={handleResetFilters}
-              className="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-zinc-900 font-medium cursor-pointer ml-auto"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Limpar filtros</span>
-            </button>
-          )}
-        </div>
-
-      </div>
-
-      {/* Product Results Grid (2-columns on mobile, up to 4 on desktop) */}
-      {loading && products.length === 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="rounded-2xl bg-white border border-zinc-200 overflow-hidden animate-pulse">
-              <div className="aspect-square sm:aspect-4/3 bg-zinc-200/70" />
-              <div className="p-4 space-y-3">
-                <div className="h-3 w-20 bg-zinc-200 rounded" />
-                <div className="h-4 w-3/4 bg-zinc-200 rounded" />
-                <div className="h-5 w-1/2 bg-zinc-200 rounded" />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : filteredProducts.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
-          {filteredProducts.map(product => (
-            <ProductCard key={product.id} product={product} />
-          ))}
-        </div>
-      ) : (
-        <div className="py-20 text-center rounded-3xl bg-white border border-zinc-200 space-y-4 shadow-xs max-w-xl mx-auto">
-          <div className="w-16 h-16 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto text-blue-600">
-            <PackageOpen className="w-8 h-8" />
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-lg font-bold text-zinc-900">
-              {products.length === 0 ? 'Catálogo Vazio' : 'Nenhum produto encontrado'}
-            </h3>
-            <p className="text-xs text-zinc-500 max-w-sm mx-auto leading-relaxed">
-              {products.length === 0
-                ? 'Nenhum produto cadastrado no momento. Você pode adicionar produtos pelo painel administrativo ou solicitar um projeto sob medida.'
-                : 'Não encontramos produtos para os critérios de busca selecionados. Tente ajustar os filtros ou fazer uma nova pesquisa.'}
-            </p>
-          </div>
-          {products.length === 0 ? (
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-              <a
-                href="/admin"
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-xs"
-              >
-                + Cadastrar Produto no Painel
-              </a>
-              <a
-                href="/custom"
-                className="px-5 py-2.5 rounded-xl bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-800 font-bold text-xs transition-colors"
-              >
-                Orçar Peça Personalizada (.STL)
-              </a>
+          ) : filteredProducts.length > 0 ? (
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 sm:gap-6">
+              {filteredProducts.map((product, i) => (
+                <motion.div
+                  key={`${selectedCategory}-${priceRange}-${inStockOnly}-${sortBy}-${product.id}`}
+                  initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: Math.min(i, 12) * 0.03, ease: [0.16, 1, 0.3, 1] }}
+                  className="flex"
+                >
+                  <ProductCard product={product} />
+                </motion.div>
+              ))}
             </div>
           ) : (
-            <button
-              onClick={handleResetFilters}
-              className="px-5 py-2.5 rounded-xl bg-zinc-200 hover:bg-zinc-300 text-zinc-900 border border-zinc-300 font-semibold text-xs transition-colors cursor-pointer"
-            >
-              Redefinir Filtros
-            </button>
+            <div className="mx-auto max-w-xl rounded-2xl bg-white px-6 py-16 text-center ring-1 ring-zinc-200">
+              <PackageOpen aria-hidden="true" className="mx-auto h-8 w-8 text-zinc-500" />
+              <h2 className="mt-4 text-lg font-semibold leading-7 text-zinc-900">
+                {products.length === 0 ? 'Catálogo vazio' : 'Nenhum produto encontrado'}
+              </h2>
+              <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-zinc-600">
+                {products.length === 0
+                  ? 'Ainda não há produtos cadastrados. Você pode pedir uma peça sob medida.'
+                  : 'Tente outra busca ou ajuste os filtros.'}
+              </p>
+              <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                {products.length > 0 && (
+                  <ButtonWithIcon variant="dark" icon={RotateCcw} onClick={handleResetFilters}>
+                    Limpar filtros
+                  </ButtonWithIcon>
+                )}
+                <ButtonWithIcon to="/custom" variant="outline">
+                  Pedir orçamento
+                </ButtonWithIcon>
+              </div>
+            </div>
           )}
         </div>
-      )}
+      </section>
 
+      {/* 4. Chamada final (marinho) */}
+      <section aria-labelledby="sob-medida-title" className="bg-[#061A30] py-16 text-white lg:py-24">
+        <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
+          <div>
+            <p className="flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-amber-300">
+              <span aria-hidden="true" className="h-px w-6 bg-amber-300" />
+              Sob medida
+            </p>
+            <h2 id="sob-medida-title" className="mt-4 font-display text-[40px] font-light leading-[44px] tracking-tight sm:text-5xl sm:leading-[52px]">
+              <span className="block">Não achou o que procurava?</span>
+              <span className="block text-amber-300">A gente imprime.</span>
+            </h2>
+            <p className="mt-4 max-w-md text-base leading-6 text-white/80">
+              Mande sua ideia ou referência e a gente transforma em peça.
+            </p>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <ButtonWithIcon to="/custom" className="w-full sm:w-auto">Pedir orçamento</ButtonWithIcon>
+            <ButtonWithIcon href={WHATSAPP_URL} variant="secondary" className="w-full sm:w-auto">Falar no WhatsApp</ButtonWithIcon>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };

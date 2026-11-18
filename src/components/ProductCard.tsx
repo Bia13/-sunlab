@@ -1,240 +1,199 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { motion } from 'framer-motion';
-import { Eye, ShoppingBag, Sparkles, Check } from 'lucide-react';
+import { Eye, Plus, Check } from 'lucide-react';
 import type { Product } from '@/data/products';
 import { useCart } from '@/context/CartContext';
+import { cn } from '@/lib/utils';
+import { flyToCart } from '@/lib/fly-to-cart';
 
 interface ProductCardProps {
   product: Product;
 }
 
+/*
+ * Card de produto: o mesmo em todo o site (Home, carrossel, Loja, relacionados).
+ * - Foto quadrada sobre fundo neutro; selos retangulares em caixa alta (no máx. 2).
+ * - Bolinhas de cor, categoria, nome (1 linha), descrição curta (1 linha), preço e botão "+" redondo.
+ * - Alturas fixas em cada linha: todos os cards de uma grade ficam com a mesma altura.
+ * - Sem borda que acende nem card que "pula" no hover: só um zoom leve na foto.
+ * - Grid de 4px; botão de 40px; bolinhas com alvo de 24px.
+ * - Contraste: textos zinc-900/zinc-600 sobre branco; selos ≥ 7:1; botão branco sobre marinho ≈ 15:1.
+ */
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const { addToCart, openQuickView } = useCart();
   const [selectedColor, setSelectedColor] = useState(product.colors[0]);
-  const [isHovered, setIsHovered] = useState(false);
-  const [addedAnimation, setAddedAnimation] = useState(false);
+  const [added, setAdded] = useState(false);
+  const timer = useRef<number>(undefined);
+  const imageRef = useRef<HTMLImageElement>(null);
 
-  const handleQuickAdd = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const href = `/product/${product.slug}`;
+  const hasPrice = product.price > 0;
+  // A foto só muda quando a pessoa escolhe uma cor (nunca no hover).
+  // Usa a foto cadastrada na cor; sem ela, a foto na mesma posição da cor
+  // (quando há uma foto por cor); senão, a foto principal.
+  const colorIndex = product.colors?.findIndex(c => c.name === selectedColor?.name) ?? 0;
+  const mainImage =
+    selectedColor?.image ||
+    (product.colors?.length > 1 && product.images.length >= product.colors.length
+      ? product.images[colorIndex]
+      : undefined) ||
+    product.images[0];
+  const formatPrice = (v: number) => v.toFixed(2).replace('.', ',');
+
+  // Desconto real, calculado do preço antigo (nunca inventado).
+  const discount =
+    product.originalPrice && product.originalPrice > product.price
+      ? Math.round((1 - product.price / product.originalPrice) * 100)
+      : 0;
+
+  const badges = [
+    discount > 0 && { label: `−${discount}%`, tone: 'bg-[#0A2540] text-white' },
+    product.bestseller && { label: 'Mais vendido', tone: 'bg-white/92 text-[#0A2540] ring-1 ring-inset ring-black/8 backdrop-blur-sm' },
+    product.newArrival && { label: 'Lançamento', tone: 'bg-white/92 text-[#0A2540] ring-1 ring-inset ring-black/8 backdrop-blur-sm' },
+    product.category === 'custom' && { label: 'Sob medida', tone: 'bg-white/92 text-[#0A2540] ring-1 ring-inset ring-black/8 backdrop-blur-sm' }
+  ].filter(Boolean) as { label: string; tone: string }[];
+
+  const handleAdd = () => {
+    // Produto sem cor cadastrada: o carrinho usa a cor "Padrão".
     addToCart(product, 1, selectedColor);
-    setAddedAnimation(true);
-    setTimeout(() => setAddedAnimation(false), 1600);
-  };
-
-  const handleQuickView = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openQuickView(product);
+    // A foto do card voa até o carrinho do topo.
+    flyToCart(imageRef.current, mainImage);
+    setAdded(true);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setAdded(false), 1600);
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 15 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: '-40px' }}
-      whileHover={{ y: -6 }}
-      transition={{ duration: 0.3 }}
-      className="group relative flex flex-col rounded-3xl bg-white border border-zinc-200 hover:border-amber-400 hover:shadow-xl transition-all duration-300 overflow-hidden"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      {/* Top Badges */}
-      <div className="absolute top-2 left-2 sm:top-3 sm:left-3 z-10 flex flex-wrap gap-1 pointer-events-none">
-        {product.bestseller && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[9px] sm:text-[11px] font-bold bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-xs">
-            <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-white" /> Mais Vendido
-          </span>
-        )}
-        {product.newArrival && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[9px] sm:text-[11px] font-bold bg-white/95 text-zinc-800 border border-zinc-200 shadow-xs backdrop-blur-md">
-            Lançamento
-          </span>
-        )}
-        {product.category === 'custom' && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[9px] sm:text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 shadow-xs backdrop-blur-md">
-            Sob Medida
-          </span>
-        )}
-      </div>
-
-      {/* Image Container */}
-      <div className="relative aspect-square sm:aspect-4/3 w-full bg-zinc-100 overflow-hidden">
-        <Link to={`/product/${product.slug}`} className="block w-full h-full">
+    <article className="group relative flex h-full w-full flex-col overflow-hidden rounded-2xl bg-white shadow-[0_1px_2px_rgba(10,37,64,0.04)] ring-1 ring-zinc-200/70 transition-shadow duration-300 hover:shadow-[0_12px_32px_-12px_rgba(10,37,64,0.16)]">
+      {/* Foto */}
+      <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-b from-[#E7E5E0] to-[#F5F4F1]">
+        <Link to={href} tabIndex={-1} aria-hidden="true" className="block h-full w-full">
           <img
-            src={product.images[0]}
-            alt={product.name}
-            className={`w-full h-full object-cover object-center transition-transform duration-700 ease-out ${
-              isHovered ? 'scale-108' : 'scale-100'
-            }`}
+            ref={imageRef}
+            key={mainImage}
+            src={mainImage}
+            alt=""
             loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
           />
-          {product.images[1] && (
-            <img
-              src={product.images[1]}
-              alt={`${product.name} detalhe`}
-              className={`absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-500 ${
-                isHovered ? 'opacity-100' : 'opacity-0'
-              }`}
-              loading="lazy"
-            />
-          )}
         </Link>
 
-        {/* Quick Action Overlay Buttons */}
-        <div className="absolute bottom-3 inset-x-3 flex gap-2 justify-center opacity-0 translate-y-3 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300">
-          <button
-            onClick={handleQuickView}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-white/95 hover:bg-white text-zinc-700 hover:text-zinc-900 border border-zinc-200 text-xs font-semibold backdrop-blur-md transition-all shadow-xs cursor-pointer active:scale-95"
-            title="Visualização Rápida"
-          >
-            <Eye className="w-3.5 h-3.5 text-zinc-500" />
-            <span>Espiar</span>
-          </button>
-          {product.price > 0 ? (
-            <button
-              onClick={handleQuickAdd}
-              disabled={addedAnimation}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer active:scale-95 ${
-                addedAnimation
-                  ? 'bg-emerald-600 text-white shadow-emerald-200'
-                  : 'bg-zinc-900 hover:bg-black text-white'
-              }`}
-              title="Adicionar ao Carrinho"
-            >
-              {addedAnimation ? (
-                <>
-                  <Check className="w-3.5 h-3.5 animate-bounce" />
-                  <span>Adicionado!</span>
-                </>
-              ) : (
-                <>
-                  <ShoppingBag className="w-3.5 h-3.5 text-zinc-300" />
-                  <span>Comprar</span>
-                </>
-              )}
-            </button>
-          ) : (
-            <Link
-              to="/custom"
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-zinc-900 hover:bg-black text-white text-xs font-semibold transition-colors shadow-xs"
-            >
-              <span>Orçar</span>
-            </Link>
-          )}
-        </div>
-      </div>
-
-      {/* Product Info */}
-      <div className="p-3 sm:p-5 flex flex-col flex-1 justify-between gap-2 sm:gap-3">
-        <div>
-          <div className="flex items-center justify-between text-xs text-zinc-500 mb-1">
-            <span className="uppercase tracking-wider font-bold text-[9px] sm:text-[10px] text-amber-800 bg-amber-50 px-1.5 sm:px-2 py-0.5 rounded-md truncate max-w-[110px]">
-              {product.categoryLabel}
-            </span>
-          </div>
-
-          <Link to={`/product/${product.slug}`} className="group/title block">
-            <h3 className="font-bold text-xs sm:text-base text-zinc-900 group-hover/title:text-amber-600 transition-colors line-clamp-2 leading-tight">
-              {product.name}
-            </h3>
-            <p className="hidden sm:block text-xs text-zinc-500 line-clamp-2 mt-1 leading-relaxed">
-              {product.tagline}
-            </p>
-          </Link>
-        </div>
-
-        {/* Color Variants Preview */}
-        {product.colors && product.colors.length > 1 && (
-          <div className="flex items-center gap-1 sm:gap-1.5 pt-0.5 sm:pt-1">
-            <span className="text-[10px] sm:text-[11px] text-zinc-400 mr-0.5">Cor:</span>
-            {product.colors.slice(0, 4).map(col => (
-              <button
-                key={col.name}
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setSelectedColor(col);
-                }}
-                className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full border transition-all cursor-pointer shrink-0 ${
-                  selectedColor.name === col.name
-                    ? 'ring-2 ring-blue-600 ring-offset-1 sm:ring-offset-2 ring-offset-white border-white scale-110'
-                    : 'border-zinc-300 hover:scale-110'
-                }`}
-                style={{ backgroundColor: col.hex }}
-                title={col.name}
-              />
+        {/* right-14: os selos quebram linha antes do botão de espiar; no máximo 2 para não cobrir a foto. */}
+        {badges.length > 0 && (
+          <div className="pointer-events-none absolute left-3 right-14 top-3 flex flex-wrap gap-1">
+            {badges.slice(0, 2).map(b => (
+              <span key={b.label} className={cn('rounded-full px-3 py-1 text-xs font-medium leading-4 tabular-nums', b.tone)}>
+                {b.label}
+              </span>
             ))}
-            <span className="hidden sm:inline text-[11px] font-medium text-zinc-600 ml-1 truncate max-w-[110px]">
-              {selectedColor.name}
-            </span>
           </div>
         )}
 
-        {/* Price & Action Button */}
-        <div className="flex items-center justify-between pt-2 sm:pt-3 border-t border-zinc-100 mt-auto gap-1.5 sm:gap-2">
-          <div>
-            {product.price > 0 ? (
-              <div>
-                <div className="flex items-baseline gap-1 sm:gap-1.5 flex-wrap">
-                  <span className="text-sm sm:text-lg font-extrabold text-zinc-900 tracking-tight whitespace-nowrap inline-flex items-baseline">
-                    <span className="mr-0.5">R$</span>
-                    <span>{product.price.toFixed(2).replace('.', ',')}</span>
-                  </span>
-                  {product.originalPrice && (
-                    <span className="text-[10px] sm:text-[11px] text-zinc-400 line-through whitespace-nowrap inline-flex items-baseline">
-                      <span className="mr-0.5">R$</span>
-                      <span>{product.originalPrice.toFixed(2).replace('.', ',')}</span>
-                    </span>
-                  )}
-                </div>
-                <p className="text-[9px] sm:text-[10px] text-zinc-400 hidden xs:block">
-                  Prazo: {product.leadTime}
-                </p>
-              </div>
-            ) : (
-              <div>
-                <span className="text-xs font-semibold text-zinc-700">Sob Orçamento</span>
-                <p className="text-[9px] sm:text-[10px] text-zinc-400">Customizável</p>
-              </div>
-            )}
-          </div>
+        {/* Espiar: sempre visível no toque; no desktop aparece no hover ou com o foco do teclado. */}
+        <button
+          type="button"
+          onClick={() => openQuickView(product)}
+          aria-label={`Ver detalhes rápidos de ${product.name}`}
+          className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-full bg-white/88 text-[#0A2540] ring-1 ring-inset ring-[#0A2540]/12 backdrop-blur-sm transition-opacity hover:bg-white focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540] cursor-pointer md:opacity-0 md:group-hover:opacity-100"
+        >
+          <Eye aria-hidden="true" className="h-4 w-4" />
+        </button>
+      </div>
 
-          {product.price > 0 ? (
-            <button
-              onClick={handleQuickAdd}
-              disabled={addedAnimation}
-              className={`px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0 flex items-center gap-1 active:scale-95 ${
-                addedAnimation
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'bg-[#0A2540] hover:bg-[#0F3A66] text-white hover:shadow-md'
-              }`}
-            >
-              {addedAnimation ? (
-                <>
-                  <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  <span className="hidden sm:inline">Adicionado!</span>
-                </>
-              ) : (
-                <>
-                  <ShoppingBag className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  <span className="hidden xs:inline">Comprar</span>
-                </>
+      {/* Informações */}
+      <div className="flex flex-1 flex-col gap-3 p-3 sm:p-4">
+        {/* Linha de cores sempre reserva 16px, com ou sem cores. */}
+        <div className="flex h-4 items-center">
+          {product.colors?.length > 1 && (
+            <div role="group" aria-label="Cores disponíveis" className="relative z-10 -mx-1 flex w-fit items-center">
+              {product.colors.slice(0, 5).map(col => {
+                const active = selectedColor?.name === col.name;
+                return (
+                  <button
+                    key={col.name}
+                    type="button"
+                    onClick={() => setSelectedColor(col)}
+                    aria-label={`Cor ${col.name}`}
+                    aria-pressed={active}
+                    title={col.name}
+                    className="grid h-6 w-6 place-items-center rounded-full cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0A2540]"
+                  >
+                    <span
+                      className={cn(
+                        'h-4 w-4 rounded-full ring-1 ring-inset ring-black/12 transition-shadow',
+                        active && 'shadow-[0_0_0_2px_#fff,0_0_0_3px_#0A2540]'
+                      )}
+                      style={{ backgroundColor: col.hex }}
+                    />
+                  </button>
+                );
+              })}
+              {product.colors.length > 5 && (
+                <span className="ml-1 text-xs leading-4 text-zinc-600">+{product.colors.length - 5}</span>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Categoria, nome e descrição curta: alturas fixas (16/24/20) para alinhar a grade. */}
+        <div className="flex flex-col gap-1">
+          <p className="h-4 truncate text-xs font-semibold uppercase leading-4 tracking-[0.12em] text-zinc-600">
+            {product.categoryLabel}
+          </p>
+          <h3 className="h-6 text-sm font-medium leading-6 text-zinc-900 sm:text-base">
+            <Link
+              to={href}
+              className="block truncate rounded-sm after:absolute after:inset-0 after:content-[''] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540]"
+            >
+              {product.name}
+            </Link>
+          </h3>
+          <p className="h-5 truncate text-sm leading-5 text-zinc-600">{product.tagline}</p>
+        </div>
+
+        <div className="mt-auto flex items-center justify-between gap-2">
+          {hasPrice ? (
+            <p className="flex min-w-0 items-baseline gap-x-2 leading-6">
+              <span className="whitespace-nowrap text-base font-bold text-zinc-900 sm:text-lg">R$ {formatPrice(product.price)}</span>
+              {product.originalPrice && (
+                <span className="min-w-0 truncate text-xs text-zinc-600 line-through">
+                  <span className="sr-only">de </span>R$ {formatPrice(product.originalPrice)}
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="text-sm font-semibold leading-5 text-zinc-900">Sob orçamento</p>
+          )}
+
+          {/* z-10: fica acima do link que cobre o card inteiro. */}
+          {hasPrice ? (
+            <button
+              type="button"
+              onClick={handleAdd}
+              aria-label={added ? `${product.name} adicionado ao carrinho` : `Adicionar ${product.name} ao carrinho`}
+              className={cn(
+                'relative z-10 grid h-10 w-10 shrink-0 place-items-center rounded-full text-white transition-colors cursor-pointer',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540]',
+                added ? 'bg-emerald-700' : 'bg-[#0A2540] hover:bg-[#0F3A66]'
+              )}
+            >
+              {added ? <Check aria-hidden="true" className="h-4 w-4" /> : <Plus aria-hidden="true" className="h-4 w-4" />}
             </button>
           ) : (
             <Link
               to="/custom"
-              className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border border-zinc-200 transition-colors shrink-0"
+              className="relative z-10 flex h-10 shrink-0 items-center rounded-full bg-[#0A2540] px-4 text-sm font-semibold leading-5 text-white transition-colors hover:bg-[#0F3A66] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540]"
             >
               Orçar
             </Link>
           )}
         </div>
+        <span role="status" className="sr-only">{added ? `${product.name} adicionado ao carrinho` : ''}</span>
       </div>
-    </motion.div>
+    </article>
   );
 };
 

@@ -1,380 +1,213 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router';
-import { motion } from 'framer-motion';
+import React, { useEffect, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import {
-  ArrowRight,
   Sparkles,
-  ShieldCheck,
-  Box,
-  ShoppingBag
+  Star,
+  Flame,
+  Package
 } from 'lucide-react';
 import { useProducts } from '@/context/ProductContext';
 import { ProductCard } from '@/components/ProductCard';
+import { ButtonWithIcon } from '@/components/ui/button-with-icon';
+import { ProductCardSkeleton } from '@/components/ProductCardSkeleton';
+import { HeroSlider } from '@/components/Home/HeroSlider';
+import { TrustTicker } from '@/components/Home/TrustTicker';
+import { CategoryShowcase } from '@/components/Home/CategoryShowcase';
+import { PrintProcess } from '@/components/Home/PrintProcess';
+import { FaqSection } from '@/components/Home/FaqSection';
+import { FromIdeaToPrint, fromIdeaToPrintVisible } from '@/components/Home/FromIdeaToPrint';
+import { FeaturedCarousel } from '@/components/Home/FeaturedCarousel';
 
-// Featured Showcase Collection
-const SHOWCASE_ITEMS = [
-  {
-    id: 'vela-renas',
-    name: 'Conjunto Vela & Renas',
-    image: '/products/natal/01_vela_renas/01_hero_estudio.jpg'
-  },
-  {
-    id: 'presepio',
-    name: 'Presépio Sagrada Família',
-    image: '/products/natal/02_presepio_familia/01_hero_estudio.jpg'
-  },
-  {
-    id: 'pinheiro',
-    name: 'Pinheiro Feliz Natal',
-    image: '/products/natal/03_pinheiro_natal/01_hero_estudio.jpg'
-  },
-  {
-    id: 'flocos',
-    name: 'Kit Flocos de Neve',
-    image: '/products/natal/04_flocos_neve/01_flatlay_conjunto.jpg'
-  },
-  {
-    id: 'bicolor',
-    name: 'Tags Bicolores Natal',
-    image: '/products/natal/05_enfeites_bicolores/01_flatlay_catalogo.jpg'
-  }
+/*
+ * Faixas de fundo da Home: cada dobra tem um tom, para a página não ficar "plana".
+ * Tons tirados da logo SunLab:
+ * - marinho (#061A30): hero, faixa de diferenciais e "Como é feito" (fora daqui, no próprio componente)
+ * - areia  (#F6F1E7): o sol/praia, quente e suave
+ * - mar    (#EAF3F9): a onda, azul bem clarinho
+ * - branco: respiro entre as cores
+ * Contraste conferido: zinc-600 sobre areia/mar ≥ 6:1; âmbar-700 (títulos grandes) ≥ 4:1; marinho ≥ 14:1.
+ * O espaçamento vertical fica dentro da faixa (py-16/24), para não sobrar fresta branca entre as cores.
+ */
+const BAND = {
+  sand: 'bg-[#F6F1E7]',
+  sea: 'bg-[#EAF3F9]',
+  white: 'bg-white'
+} as const;
+
+const Band: React.FC<{ tone: keyof typeof BAND; children: React.ReactNode }> = ({ tone, children }) => (
+  <div className={`w-full py-16 sm:py-24 ${BAND[tone]}`}>{children}</div>
+);
+
+type GridFilter = 'all' | 'bestsellers' | 'newArrivals';
+
+const GRID_FILTERS: { id: GridFilter; label: string; icon?: typeof Star }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'bestsellers', label: 'Mais vendidos', icon: Flame },
+  { id: 'newArrivals', label: 'Lançamentos', icon: Sparkles }
 ];
 
 export const Home: React.FC = () => {
   const { products, loading } = useProducts();
-  const [activeTab, setActiveTab] = useState<'featured' | 'bestsellers' | 'newArrivals'>('featured');
+  const [activeTab, setActiveTab] = useState<GridFilter>('all');
+  // Troca de filtro com um "carregando" curto (esqueletos) antes dos cards entrarem.
+  const [switching, setSwitching] = useState(false);
+  const switchTimer = useRef<number>(undefined);
 
-  // Featured Showcase State
-  const [selectedShowcase] = useState(SHOWCASE_ITEMS[0]);
+  const reduceMotion = useReducedMotion();
 
-  const filteredProducts = products.filter(p => {
+  useEffect(() => () => window.clearTimeout(switchTimer.current), []);
+
+  const changeFilter = (id: GridFilter) => {
+    if (id === activeTab) return;
+    setActiveTab(id);
+    // Com "reduzir movimento", troca direto, sem esqueleto.
+    if (reduceMotion) return;
+    setSwitching(true);
+    window.clearTimeout(switchTimer.current);
+    switchTimer.current = window.setTimeout(() => setSwitching(false), 480);
+  };
+
+  // Destaques vão para o carrossel; a grade mostra o catálogo com filtro.
+  const featuredProducts = products.filter(p => p.featured);
+  const gridProducts = products.filter(p => {
     if (activeTab === 'bestsellers') return p.bestseller;
     if (activeTab === 'newArrivals') return p.newArrival;
-    return p.featured;
+    return true;
   }).slice(0, 8);
 
   return (
-    <div className="w-full flex flex-col space-y-16 sm:space-y-24 pb-20 overflow-hidden">
+    <div className="flex w-full flex-col overflow-x-clip">
       
-      {/* 🚀 TICKER ANIMADO DINÂMICO (Marquee Infinito com estilo 3D Studio) */}
-      <div className="w-full bg-[#0A2540] text-white py-2.5 overflow-hidden border-b border-slate-800 text-[11px] font-medium tracking-wide shadow-xs select-none">
-        <div className="animate-marquee whitespace-nowrap flex items-center gap-8">
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Acabamento <strong>Impecável e Suave</strong>
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            <Box className="w-3.5 h-3.5 text-sky-400" /> Material de Alta Qualidade
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            💬 Atendimento e Pedidos Direto no <strong>WhatsApp</strong>
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            🌊 <strong>Essência Caiçara</strong> & Criatividade
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Pagamento Seguro via <strong>PIX</strong>
-          </span>
-          <span className="text-slate-500">•</span>
-          {/* Loop repeat for seamless marquee */}
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Acabamento <strong>Impecável e Suave</strong>
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            <Box className="w-3.5 h-3.5 text-sky-400" /> Material de Alta Qualidade
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            💬 Atendimento e Pedidos Direto no <strong>WhatsApp</strong>
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            🌊 <strong>Essência Caiçara</strong> & Criatividade
-          </span>
-          <span className="text-slate-500">•</span>
-          <span className="flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Pagamento Seguro via <strong>PIX</strong>
-          </span>
-        </div>
-      </div>
+      {/* 1. HERO: slider de coleções */}
+      <HeroSlider />
 
-      {/* 1. HERO SECTION CRIATIVO & ANIMADO */}
-      <section className="relative w-full pt-6 pb-16 overflow-hidden bg-gradient-to-b from-amber-50/30 via-white to-slate-50/50 border-b border-zinc-200">
-        
-        {/* Subtle Background Pattern */}
-        <div className="absolute inset-0 bg-grid-tech opacity-60 pointer-events-none" />
+      {/* Faixa de diferenciais: continua o marinho da hero. */}
+      <TrustTicker />
 
-        {/* Ambient Subtle Glow Orbs with Float Animation */}
-        <motion.div 
-          animate={{ scale: [1, 1.15, 1], opacity: [0.4, 0.6, 0.4] }}
-          transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
-          className="absolute -top-24 -left-24 w-96 h-96 bg-amber-100/50 rounded-full blur-3xl pointer-events-none" 
-        />
-        <motion.div 
-          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.5, 0.3] }}
-          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-          className="absolute top-1/2 -right-24 w-96 h-96 bg-sky-100/50 rounded-full blur-3xl pointer-events-none" 
-        />
+      {/* Vitrine de categorias */}
+      <Band tone="sand">
+        <CategoryShowcase products={products} />
+      </Band>
 
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-            
-            {/* Left Content Column with Staggered Entrance */}
-            <motion.div
-              variants={{
-                hidden: { opacity: 0 },
-                visible: {
-                  opacity: 1,
-                  transition: { staggerChildren: 0.12, delayChildren: 0.1 }
-                }
-              }}
-              initial="hidden"
-              animate="visible"
-              className="lg:col-span-7 space-y-6 text-left"
-            >
-              {/* Main Headline */}
-              <motion.h1 
-                variants={{ hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0 } }}
-                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                className="text-3xl sm:text-5xl lg:text-6xl font-extrabold text-zinc-900 tracking-tight leading-[1.15] sm:leading-[1.1] font-display"
-              >
-                Ideias que <br className="hidden sm:inline" />
-                <span className="bg-gradient-to-r from-[#0A2540] via-[#0284C7] to-[#F59E0B] bg-clip-text text-transparent">
-                  ganham forma.
-                </span>
-              </motion.h1>
+      {/* 2. DESTAQUES EM CARROSSEL (com "Ver todos") */}
+      <Band tone="white">
+        <FeaturedCarousel products={featuredProducts} />
+      </Band>
 
-              {/* Subtitle & Narrative */}
-              <motion.div 
-                variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0 } }}
-                transition={{ duration: 0.5 }}
-                className="space-y-3 text-sm sm:text-base text-zinc-600 max-w-xl font-normal leading-relaxed"
-              >
-                <p>
-                  Da imaginação para o mundo real. Criamos peças em impressão 3D, personalizadas para você, para sua marca ou para transformar aquele projeto que só existia na sua cabeça.
-                </p>
-                <p>
-                  Unimos criatividade, personalização e tecnologia para dar vida a novas possibilidades. Do pequeno detalhe a projetos exclusivos, cada criação tem seu propósito.
-                </p>
-                <p className="font-semibold text-zinc-900 italic pt-0.5">
-                  Você imagina. A SunLab dá forma.
-                </p>
-              </motion.div>
+      {/* 3. GRADE DO CATÁLOGO COM FILTRO */}
+      <Band tone="sea">
+      <section id="produtos" aria-labelledby="catalogo-title" className="mx-auto w-full max-w-7xl scroll-mt-24 px-4 sm:px-6 lg:px-8">
+        {/* Cabeçalho editorial em dois tons (mesmo padrão da vitrine de categorias). */}
+        <p className="flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-zinc-600">
+          <span aria-hidden="true" className="h-px w-6 bg-amber-500" />
+          Catálogo
+        </p>
+        <h2 id="catalogo-title" className="mt-4 font-display text-[40px] font-light leading-[44px] tracking-tight text-[#0A2540] sm:text-5xl sm:leading-[52px] lg:text-[56px] lg:leading-[60px]">
+          <span className="block">Explore o</span>
+          <span className="block text-amber-700">catálogo.</span>
+        </h2>
 
-              {/* Call to Actions */}
-              <motion.div 
-                variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0 } }}
-                className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3.5 pt-1"
-              >
-                <motion.a
-                  href="#produtos"
-                  whileHover={{ scale: 1.02, y: -2 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-[#0A2540] hover:bg-[#0F3A66] text-white font-bold text-sm transition-all shadow-md hover:shadow-lg cursor-pointer group"
-                >
-                  <ShoppingBag className="w-4 h-4 text-amber-400" />
-                  <span>Explorar Catálogo</span>
-                  <ArrowRight className="w-4 h-4 text-amber-400 group-hover:translate-x-1.5 transition-transform" />
-                </motion.a>
-              </motion.div>
-
-              {/* Quick Quality Highlights with Hover Spring */}
-              <motion.div 
-                variants={{ hidden: { opacity: 0, y: 18 }, visible: { opacity: 1, y: 0 } }}
-                className="grid grid-cols-3 gap-2 sm:gap-6 pt-4 sm:pt-6 border-t border-zinc-200 max-w-lg"
-              >
-                <motion.div 
-                  whileHover={{ y: -4, scale: 1.02 }} 
-                  className="p-2.5 sm:p-3 rounded-xl bg-white border border-zinc-100 shadow-2xs hover:shadow-md text-center sm:text-left transition-shadow cursor-default"
-                >
-                  <div className="text-base sm:text-lg font-bold text-zinc-900 font-display">Design</div>
-                  <div className="text-[10px] sm:text-xs text-zinc-500 mt-0.5 leading-tight">Autoral & exclusivo</div>
-                </motion.div>
-                <motion.div 
-                  whileHover={{ y: -4, scale: 1.02 }} 
-                  className="p-2.5 sm:p-3 rounded-xl bg-white border border-zinc-100 shadow-2xs hover:shadow-md text-center sm:text-left transition-shadow cursor-default"
-                >
-                  <div className="text-base sm:text-lg font-bold text-zinc-900 font-display">100%</div>
-                  <div className="text-[10px] sm:text-xs text-zinc-500 mt-0.5 leading-tight">Material de qualidade</div>
-                </motion.div>
-                <motion.div 
-                  whileHover={{ y: -4, scale: 1.02 }} 
-                  className="p-2.5 sm:p-3 rounded-xl bg-white border border-zinc-100 shadow-2xs hover:shadow-md text-center sm:text-left transition-shadow cursor-default"
-                >
-                  <div className="text-base sm:text-lg font-bold text-zinc-900 font-display">48h</div>
-                  <div className="text-[10px] sm:text-xs text-zinc-500 mt-0.5 leading-tight">Envio rápido</div>
-                </motion.div>
-              </motion.div>
-            </motion.div>
-
-            {/* Right Product Showcase with Floating Levitation */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.7, delay: 0.2 }}
-              className="lg:col-span-5 relative"
-            >
-              {/* Outer Decorative Glow with Gentle Breathing */}
-              <motion.div 
-                animate={{ scale: [1, 1.08, 1], rotate: [1, -1, 1] }}
-                transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
-                className="absolute inset-0 bg-gradient-to-tr from-blue-400/20 to-amber-400/10 rounded-3xl blur-2xl transform" 
-              />
-
-              <motion.div 
-                animate={{ y: [0, -10, 0] }}
-                transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-                className="relative rounded-3xl bg-white border border-zinc-200 shadow-xl p-3 sm:p-4 overflow-hidden"
-              >
-                {/* Main Viewport Area */}
-                <div className="relative aspect-4/5 rounded-2xl overflow-hidden bg-zinc-100 border border-zinc-200 group">
-                  <img
-                    src={selectedShowcase.image}
-                    alt={selectedShowcase.name}
-                    className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-108"
-                  />
-
-                  {/* Floating Badge with Breathing Pulse */}
-                  <div className="absolute top-3 right-3 z-20 flex flex-col items-end gap-1.5">
-                    <motion.span 
-                      animate={{ scale: [1, 1.05, 1] }}
-                      transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-                      className="backdrop-blur-md bg-white/95 border border-zinc-200 px-3 py-1 rounded-full text-[11px] font-bold text-zinc-800 shadow-xs flex items-center gap-1.5"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                      Coleção Exclusiva
-                    </motion.span>
-                  </div>
-
-                  {/* Subtle Bottom Title */}
-                  <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/60 via-black/20 to-transparent text-white">
-                    <span className="text-xs font-semibold tracking-wide block text-white/95">
-                      {selectedShowcase.name}
-                    </span>
-                  </div>
-                </div>
-              </motion.div>
-            </motion.div>
-
-          </div>
-        </div>
-      </section>
-
-      {/* 2. PRODUTOS EM DESTAQUE COM FILTROS INTERATIVOS & ABAS ANIMADAS */}
-      <section id="produtos" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full scroll-mt-24">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-blue-600 mb-1 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" /> Catálogo Selecionado
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight font-display">
-              Coleções em Destaque
-            </h2>
-          </div>
-
-          {/* Filter Tabs com LayoutId Spring Animation */}
-          <div className="flex items-center gap-1 p-1 rounded-2xl bg-zinc-100 border border-zinc-200 overflow-x-auto whitespace-nowrap scrollbar-none max-w-full shadow-2xs relative">
-            {[
-              { id: 'featured', label: '⭐ Destaques' },
-              { id: 'bestsellers', label: '🔥 Mais Vendidos' },
-              { id: 'newArrivals', label: '✨ Lançamentos' }
-            ].map(tab => (
+        {/* Filtro: pílulas contornadas em caixa alta; a escolhida fica marinho (texto branco ≈ 15:1). */}
+        <div role="group" aria-label="Filtrar produtos" className="-mx-4 mb-8 mt-8 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:mb-12 sm:px-0 sm:pb-0">
+          {GRID_FILTERS.map(f => {
+            const active = activeTab === f.id;
+            return (
               <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`relative px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer shrink-0 z-10 ${
-                  activeTab === tab.id
-                    ? 'text-blue-700 font-bold'
-                    : 'text-zinc-600 hover:text-zinc-900'
+                key={f.id}
+                type="button"
+                onClick={() => changeFilter(f.id)}
+                aria-pressed={active}
+                className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-5 text-xs font-semibold uppercase leading-4 tracking-[0.12em] transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540] ${
+                  active
+                    ? 'bg-[#0A2540] text-white'
+                    : 'bg-transparent text-zinc-700 ring-1 ring-inset ring-zinc-300 hover:ring-[#0A2540] hover:text-[#0A2540]'
                 }`}
               >
-                {activeTab === tab.id && (
-                  <motion.div
-                    layoutId="activeFilterTab"
-                    className="absolute inset-0 bg-white rounded-xl shadow-xs border border-zinc-200 -z-10"
-                    transition={{ type: 'spring', stiffness: 450, damping: 30 }}
-                  />
-                )}
-                {tab.label}
+                {f.icon && <f.icon aria-hidden="true" className="h-4 w-4" />}
+                {f.label}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        {/* Products Grid with Animated Cards */}
-        {loading && products.length === 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="rounded-2xl bg-white border border-zinc-200 overflow-hidden animate-pulse">
-                <div className="aspect-square sm:aspect-4/3 bg-zinc-200/70" />
-                <div className="p-4 space-y-3">
-                  <div className="h-3 w-20 bg-zinc-200 rounded" />
-                  <div className="h-4 w-3/4 bg-zinc-200 rounded" />
-                  <div className="h-5 w-1/2 bg-zinc-200 rounded" />
-                </div>
-              </div>
+        {/* Aviso para leitor de tela quando o filtro termina de carregar. */}
+        <p role="status" className="sr-only">
+          {switching || (loading && products.length === 0)
+            ? 'Carregando produtos'
+            : `${gridProducts.length} ${gridProducts.length === 1 ? 'produto' : 'produtos'}`}
+        </p>
+
+        {(loading && products.length === 0) || switching ? (
+          // Mesmo número de esqueletos que de cards que vão aparecer: a grade não muda de altura.
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 sm:gap-6" aria-busy="true">
+            {[...Array(Math.max(gridProducts.length, switching ? 1 : 4))].map((_, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
+              >
+                <ProductCardSkeleton />
+              </motion.div>
             ))}
           </div>
-        ) : filteredProducts.length > 0 ? (
-          <motion.div 
-            layout
-            className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-6"
-          >
-            {filteredProducts.map(product => (
-              <ProductCard key={product.id} product={product} />
+        ) : gridProducts.length > 0 ? (
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 sm:gap-6">
+            {gridProducts.map((product, i) => (
+              // key com o filtro: os cards entram de novo a cada troca, um depois do outro.
+              <motion.div
+                key={`${activeTab}-${product.id}`}
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: i * 0.04, ease: [0.16, 1, 0.3, 1] }}
+                className="flex"
+              >
+                <ProductCard product={product} />
+              </motion.div>
             ))}
-          </motion.div>
+          </div>
         ) : (
-          <div className="py-16 px-6 text-center rounded-3xl bg-white border border-zinc-200 shadow-xs space-y-4 max-w-xl mx-auto">
-            <div className="w-14 h-14 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto text-2xl text-blue-600 shadow-2xs">
-              📦
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-zinc-900">Catálogo Vazio</h3>
-              <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto leading-relaxed">
-                Nenhum produto cadastrado no momento. Você pode cadastrar novas peças com fotos e detalhes através do painel de administração ou solicitar um orçamento sob medida.
-              </p>
-            </div>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-              <Link
-                to="/admin"
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-xs"
-              >
-                + Cadastrar Novo Produto
-              </Link>
-              <Link
-                to="/custom"
-                className="px-5 py-2.5 rounded-xl bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-800 font-bold text-xs transition-colors"
-              >
-                Orçar Peça Personalizada
-              </Link>
+          <div className="mx-auto max-w-xl rounded-2xl bg-white px-6 py-16 text-center ring-1 ring-zinc-200">
+            <Package aria-hidden="true" className="mx-auto h-8 w-8 text-zinc-500" />
+            <h3 className="mt-4 text-base font-bold text-zinc-900">Nenhum produto neste filtro</h3>
+            <p className="mt-2 text-sm leading-6 text-zinc-600">
+              Veja todas as peças ou peça um orçamento de uma peça sob medida.
+            </p>
+            <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <ButtonWithIcon variant="dark" onClick={() => setActiveTab('all')}>
+                Ver todas as peças
+              </ButtonWithIcon>
+              <ButtonWithIcon to="/custom" variant="outline">
+                Pedir orçamento
+              </ButtonWithIcon>
             </div>
           </div>
         )}
 
-        {products.length > 0 && (
-          <motion.div 
-            initial={{ opacity: 0, y: 15 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center pt-10"
-          >
-            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="inline-block">
-              <Link
-                to="/catalog"
-                className="inline-flex items-center justify-center gap-2 px-8 py-3.5 rounded-2xl bg-white hover:bg-zinc-50 border-2 border-zinc-300 hover:border-blue-500 text-blue-800 font-bold text-sm transition-all cursor-pointer shadow-xs hover:shadow-md group"
-              >
-                <span>Ver Todos os {products.length} Produtos do Catálogo</span>
-                <ArrowRight className="w-4 h-4 text-blue-600 group-hover:translate-x-1.5 transition-transform" />
-              </Link>
-            </motion.div>
-          </motion.div>
+        {products.length > gridProducts.length && (
+          <div className="mt-8 flex justify-center sm:mt-12">
+            <ButtonWithIcon to="/catalog" variant="outline">
+              Ver os {products.length} produtos
+            </ButtonWithIcon>
+          </div>
         )}
       </section>
+      </Band>
+
+      {/* Como é feito: processo guiado pelo scroll */}
+      <PrintProcess />
+
+      {/* Como funciona: da referência à peça impressa (antes e depois) */}
+      {fromIdeaToPrintVisible && (
+        <Band tone="sand">
+          <FromIdeaToPrint />
+        </Band>
+      )}
+
+      {/* Perguntas frequentes */}
+      <Band tone="white">
+        <FaqSection />
+      </Band>
 
     </div>
   );

@@ -1,372 +1,288 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useLocation } from 'react-router';
-import { Search, ShoppingBag, Menu, X, ArrowUpRight, ChevronDown, User, ShieldCheck, LogOut } from 'lucide-react';
+import { Search, ShoppingBag, Menu, X, ChevronDown, User, ShieldCheck, LogOut, Package } from 'lucide-react';
 import SunLabLogo from './SunLabLogo';
+import { Tabs, type NavTab } from '@/components/ui/vercel-tabs';
 import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
 import { CATEGORIES } from '@/data/products';
+import { cn } from '@/lib/utils';
+
+/*
+ * Barra do topo: limpa e direta.
+ * - Mesma largura e respiro do conteúdo (max-w-7xl + px-4/6/8), então logo e título da hero se alinham.
+ * - Altura fixa de 64px; todos os alvos de toque com 40px (acima dos 24px do WCAG 2.5.8).
+ * - Desktop: abas no estilo Vercel (realce que desliza + linha na página atual).
+ * - Ações à direita só com ícone e nome acessível; o carrinho é o único botão cheio (ação principal).
+ * - Nada piscando: saíram o ponto pulsando de "Personalizados" e o pulo do contador do carrinho.
+ */
+
+const CATEGORY_LINKS = CATEGORIES.filter(c => c.id !== 'all');
+
+const iconButton =
+  'relative grid h-10 w-10 shrink-0 place-items-center rounded-full text-slate-700 transition-colors hover:bg-slate-100 hover:text-[#0A2540] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540] cursor-pointer';
 
 export const Navbar: React.FC = () => {
   const { totalItems, openCart, openSearch } = useCart();
   const { user, isAdmin, logout } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const categoryRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
 
   useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 20);
-    };
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  // Fechar menu mobile ao trocar de rota
+  // Fecha menus ao trocar de página.
   useEffect(() => {
     setIsMobileMenuOpen(false);
-    setIsCategoryDropdownOpen(false);
+    setIsCategoryOpen(false);
+  }, [location.pathname, location.search]);
+
+  // Página nova sempre abre no topo (o React Router não faz isso sozinho).
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }, [location.pathname]);
 
+  // Clique na logo, numa aba, numa categoria ou no menu do celular que aponta para a página
+  // em que a pessoa JÁ está: rola suave até o topo. Um handler só, no <header> inteiro.
+  const handleSamePageClick = (e: React.MouseEvent<HTMLElement>) => {
+    const link = (e.target as HTMLElement).closest('a');
+    if (!link || link.target === '_blank' || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    const url = new URL(link.href, window.location.origin);
+    if (url.origin !== window.location.origin) return;
+    if (url.pathname === location.pathname && url.search === location.search) {
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: 0, behavior: reduce ? 'instant' : 'smooth' });
+      setIsMobileMenuOpen(false);
+      setIsCategoryOpen(false);
+    }
+  };
+
+  // Esc fecha qualquer menu aberto; clique fora fecha o de categorias.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsCategoryOpen(false);
+        setIsMobileMenuOpen(false);
+      }
+    };
+    const onClick = (e: MouseEvent) => {
+      if (categoryRef.current && !categoryRef.current.contains(e.target as Node)) setIsCategoryOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onClick);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onClick);
+    };
+  }, []);
+
+  const path = location.pathname;
+  const activeTab =
+    path === '/' || path === '/home' ? 'home'
+    : path.startsWith('/catalog') || path.startsWith('/product') ? 'catalog'
+    : path === '/custom' ? 'custom'
+    : path === '/aboutus' ? 'about'
+    : path === '/contact' ? 'contact'
+    : null;
+
+  const tabs: NavTab[] = [
+    { id: 'home', label: 'Início', to: '/' },
+    { id: 'catalog', label: 'Loja', to: '/catalog' },
+    {
+      id: 'categories',
+      label: 'Categorias',
+      onClick: () => setIsCategoryOpen(o => !o),
+      buttonProps: { 'aria-expanded': isCategoryOpen, 'aria-controls': 'menu-categorias' },
+      trailing: (
+        <ChevronDown
+          aria-hidden="true"
+          className={cn('h-4 w-4 text-slate-500 transition-transform motion-reduce:transition-none', isCategoryOpen && 'rotate-180')}
+        />
+      ),
+      panel: isCategoryOpen ? (
+        <div
+          id="menu-categorias"
+          className="absolute left-0 top-full z-50 mt-4 w-72 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_48px_-16px_rgba(10,37,64,0.24)] animate-in fade-in slide-in-from-top-1 duration-150"
+        >
+          {CATEGORY_LINKS.map(cat => (
+            <Link
+              key={cat.id}
+              to={`/catalog?cat=${cat.id}`}
+              className="flex flex-col gap-0.5 rounded-xl px-4 py-3 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0A2540]"
+            >
+              <span className="text-sm font-semibold leading-5 text-[#0A2540]">{cat.name}</span>
+              <span className="text-xs leading-4 text-slate-600">{cat.label}</span>
+            </Link>
+          ))}
+        </div>
+      ) : null
+    },
+    { id: 'custom', label: 'Personalizados', to: '/custom' },
+    { id: 'about', label: 'Sobre', to: '/aboutus' },
+    { id: 'contact', label: 'Contato', to: '/contact' }
+  ];
+
+  const mobileLink = ({ isActive }: { isActive: boolean }) =>
+    cn(
+      'flex h-12 items-center rounded-xl px-4 text-base font-medium transition-colors',
+      isActive ? 'bg-slate-100 text-[#0A2540] font-semibold' : 'text-slate-700 hover:bg-slate-50'
+    );
+
   return (
-    <>
-      {/* Main Header Bar */}
-      <header
-        className={`sticky top-0 z-40 w-full transition-all duration-300 ${
-          scrolled
-            ? 'bg-white/95 backdrop-blur-xl border-b border-zinc-200 shadow-xs'
-            : 'bg-white/85 backdrop-blur-md border-b border-zinc-200/80'
-        }`}
-      >
-        <div className="max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 xl:px-10 h-16 sm:h-20 flex items-center justify-between gap-4">
-          
-          {/* SunLab Logo */}
-          <Link
-            to="/"
-            className="flex items-center gap-3 group cursor-pointer transition-transform hover:scale-[1.02] shrink-0"
+    <header
+      onClick={handleSamePageClick}
+      className={cn(
+        // Linha de baixo feita com sombra (não soma altura): a barra fica com 64px exatos.
+        'sticky top-0 z-40 w-full bg-white/90 backdrop-blur-xl transition-shadow duration-300',
+        scrolled
+          ? 'shadow-[0_1px_0_#e2e8f0,0_4px_16px_rgba(10,37,64,0.06)]'
+          : 'shadow-[0_1px_0_rgba(226,232,240,0.8)]'
+      )}
+    >
+      <div className="mx-auto flex h-16 w-full max-w-7xl items-center gap-8 px-4 sm:px-6 lg:px-8">
+        {/* Logo: sempre volta ao início. */}
+        <Link
+          to="/"
+          aria-label="SunLab, voltar ao início"
+          className="shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#0A2540]"
+        >
+          <SunLabLogo size="sm" />
+        </Link>
+
+        {/* Abas (desktop) */}
+        <nav aria-label="Principal" className="hidden h-full lg:flex" ref={categoryRef}>
+          <Tabs tabs={tabs} activeTab={activeTab} className="h-full" />
+        </nav>
+
+        {/* Ações */}
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
+          <button type="button" onClick={openSearch} className={iconButton} aria-label="Buscar produtos" title="Buscar produtos">
+            <Search aria-hidden="true" className="h-5 w-5" />
+          </button>
+
+          <NavLink
+            to="/orders"
+            className={cn(iconButton, 'hidden sm:grid')}
+            aria-label="Meus pedidos"
+            title="Meus pedidos"
           >
-            <SunLabLogo size="md" variant="light" />
-          </Link>
+            <Package aria-hidden="true" className="h-5 w-5" />
+          </NavLink>
 
-          {/* Desktop Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-1.5 xl:gap-2.5 2xl:gap-3 whitespace-nowrap shrink-0">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                `px-3 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  isActive
-                    ? 'text-[#0a2540] bg-amber-50 font-bold border border-amber-200/80 shadow-xs'
-                    : 'text-slate-700 hover:text-[#0a2540] hover:bg-slate-100/70'
-                }`
-              }
-            >
-              Início
+          {isAdmin && (
+            <NavLink to="/admin" className={cn(iconButton, 'hidden sm:grid')} aria-label="Painel administrativo" title="Painel administrativo">
+              <ShieldCheck aria-hidden="true" className="h-5 w-5" />
             </NavLink>
+          )}
 
-            <NavLink
-              to="/catalog"
-              className={({ isActive }) =>
-                `px-3 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  isActive
-                    ? 'text-[#0a2540] bg-amber-50 font-bold border border-amber-200/80 shadow-xs'
-                    : 'text-slate-700 hover:text-[#0a2540] hover:bg-slate-100/70'
-                }`
-              }
+          {user ? (
+            <button
+              type="button"
+              onClick={logout}
+              className={cn(iconButton, 'hidden sm:grid hover:bg-red-50 hover:text-red-700')}
+              aria-label={`Sair da conta de ${user.name.split(' ')[0]}`}
+              title="Sair da conta"
             >
-              Loja
+              <LogOut aria-hidden="true" className="h-5 w-5" />
+            </button>
+          ) : (
+            <NavLink to="/login" className={cn(iconButton, 'hidden sm:grid')} aria-label="Entrar na conta" title="Entrar na conta">
+              <User aria-hidden="true" className="h-5 w-5" />
             </NavLink>
+          )}
 
-            {/* Categorias Popover Dropdown */}
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsCategoryDropdownOpen(!isCategoryDropdownOpen)}
-                onMouseEnter={() => setIsCategoryDropdownOpen(true)}
-                className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-medium text-slate-700 hover:text-[#0a2540] hover:bg-slate-100/70 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <span>Categorias</span>
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isCategoryDropdownOpen ? 'rotate-180 text-[#0a2540]' : 'text-slate-400'}`} />
-              </button>
+          {/* Carrinho: única ação cheia da barra. Contador marinho sobre âmbar ≈ 11:1. */}
+          <button
+            type="button"
+            onClick={openCart}
+            data-cart-target
+            aria-label={`Abrir carrinho, ${totalItems} ${totalItems === 1 ? 'item' : 'itens'}`}
+            className="relative flex h-10 shrink-0 items-center gap-2 rounded-full bg-[#0A2540] px-3 text-sm font-semibold leading-5 text-white transition-colors hover:bg-[#0F3A66] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540] cursor-pointer sm:px-4"
+          >
+            <ShoppingBag aria-hidden="true" className="h-5 w-5" />
+            <span className="hidden xl:inline">Carrinho</span>
+            {totalItems > 0 && (
+              <span aria-hidden="true" className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-400 px-1 text-xs font-bold leading-4 text-[#061A30]">
+                {totalItems}
+              </span>
+            )}
+          </button>
 
-              {isCategoryDropdownOpen && (
-                <div
-                  onMouseLeave={() => setIsCategoryDropdownOpen(false)}
-                  className="absolute top-full left-0 mt-1 w-64 rounded-xl bg-white border border-zinc-200 shadow-lg p-2 z-50 animate-in fade-in zoom-in-95 duration-150"
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(o => !o)}
+            className={cn(iconButton, 'lg:hidden')}
+            aria-label={isMobileMenuOpen ? 'Fechar menu' : 'Abrir menu'}
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="menu-mobile"
+          >
+            {isMobileMenuOpen ? <X aria-hidden="true" className="h-5 w-5" /> : <Menu aria-hidden="true" className="h-5 w-5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Menu do celular/tablet */}
+      {isMobileMenuOpen && (
+        <div id="menu-mobile" className="max-h-[calc(100svh-64px)] overflow-y-auto border-t border-slate-200 bg-white lg:hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          <nav aria-label="Principal" className="mx-auto flex max-w-7xl flex-col gap-1 px-4 py-4 sm:px-6">
+            <NavLink to="/" end className={mobileLink}>Início</NavLink>
+            <NavLink to="/catalog" className={mobileLink}>Loja</NavLink>
+
+            <p className="px-4 pb-2 pt-4 text-xs font-semibold uppercase leading-4 tracking-wider text-slate-600">Categorias</p>
+            <div className="flex flex-wrap gap-2 px-4 pb-2">
+              {CATEGORY_LINKS.map(cat => (
+                <Link
+                  key={cat.id}
+                  to={`/catalog?cat=${cat.id}`}
+                  className="flex h-10 items-center rounded-full border border-slate-200 px-4 text-sm font-medium text-slate-700 transition-colors hover:border-[#0A2540] hover:text-[#0A2540]"
                 >
-                  <div className="text-[10px] uppercase font-bold text-amber-600 px-3 py-1.5 tracking-wider">
-                    Coleções SunLab
-                  </div>
-                  {CATEGORIES.filter(c => c.id !== 'all').map(cat => (
-                    <Link
-                      key={cat.id}
-                      to={`/catalog?cat=${cat.id}`}
-                      className="flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-slate-800 hover:text-[#0a2540] hover:bg-amber-50/70 transition-colors"
-                    >
-                      <span>{cat.name}</span>
-                      <span className="text-[10px] text-amber-600 font-normal">{cat.label}</span>
-                    </Link>
-                  ))}
-                </div>
-              )}
+                  {cat.name}
+                </Link>
+              ))}
             </div>
 
-            <NavLink
-              to="/custom"
-              className={({ isActive }) =>
-                `flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  isActive
-                    ? 'text-[#0a2540] bg-amber-50 border border-amber-200/80 font-bold shadow-xs'
-                    : 'text-slate-700 hover:text-[#0a2540] hover:bg-slate-100/70'
-                }`
-              }
-            >
-              <span>Personalizados</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-            </NavLink>
+            <NavLink to="/custom" className={mobileLink}>Personalizados</NavLink>
+            <NavLink to="/aboutus" className={mobileLink}>Sobre</NavLink>
+            <NavLink to="/contact" className={mobileLink}>Contato</NavLink>
 
-            <NavLink
-              to="/aboutus"
-              className={({ isActive }) =>
-                `px-3 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  isActive
-                    ? 'text-[#0a2540] bg-amber-50 font-bold border border-amber-200/80 shadow-xs'
-                    : 'text-slate-700 hover:text-[#0a2540] hover:bg-slate-100/70'
-                }`
-              }
-            >
-              Sobre Nós
-            </NavLink>
+            <div className="my-2 h-px bg-slate-200" />
 
-            <NavLink
-              to="/contact"
-              className={({ isActive }) =>
-                `px-3 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
-                  isActive
-                    ? 'text-[#0a2540] bg-amber-50 font-bold border border-amber-200/80 shadow-xs'
-                    : 'text-slate-700 hover:text-[#0a2540] hover:bg-slate-100/70'
-                }`
-              }
-            >
-              Contato
+            <NavLink to="/orders" className={mobileLink}>
+              <Package aria-hidden="true" className="mr-3 h-5 w-5 text-slate-500" />
+              Meus pedidos
             </NavLink>
-
-            {!user && (
-              <NavLink
-                to="/orders"
-                className={({ isActive }) =>
-                  `px-3 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    isActive
-                      ? 'text-[#0a2540] bg-amber-50 font-bold border border-amber-200/80 shadow-xs'
-                      : 'text-slate-700 hover:text-[#0a2540] hover:bg-slate-100/70'
-                  }`
-                }
+            {isAdmin && (
+              <NavLink to="/admin" className={mobileLink}>
+                <ShieldCheck aria-hidden="true" className="mr-3 h-5 w-5 text-slate-500" />
+                Painel administrativo
+              </NavLink>
+            )}
+            {user ? (
+              <button
+                type="button"
+                onClick={() => { logout(); setIsMobileMenuOpen(false); }}
+                className="flex h-12 items-center rounded-xl px-4 text-base font-medium text-red-700 transition-colors hover:bg-red-50 cursor-pointer"
               >
-                Meus Pedidos
+                <LogOut aria-hidden="true" className="mr-3 h-5 w-5" />
+                Sair da conta ({user.name.split(' ')[0]})
+              </button>
+            ) : (
+              <NavLink to="/login" className={mobileLink}>
+                <User aria-hidden="true" className="mr-3 h-5 w-5 text-slate-500" />
+                Entrar ou criar conta
               </NavLink>
             )}
           </nav>
-
-          {/* Right Action Icons (Search, Cart, Mobile Menu) */}
-          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 whitespace-nowrap">
-            {/* Search Trigger */}
-            <button
-              onClick={openSearch}
-              className="p-2 sm:px-3 sm:py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200/80 border border-zinc-200 text-blue-700 transition-colors cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap"
-              title="Buscar produtos"
-            >
-              <Search className="w-4 h-4 text-blue-500 shrink-0" />
-              <span className="text-xs text-blue-600 hidden 2xl:inline font-normal whitespace-nowrap">Buscar...</span>
-            </button>
-
-            {/* Login / Admin Action & Sair */}
-            {user ? (
-              <div className="flex items-center gap-1.5 shrink-0 whitespace-nowrap">
-                {isAdmin ? (
-                  <NavLink
-                    to="/admin"
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-300 text-xs font-bold transition-all shadow-xs cursor-pointer shrink-0 whitespace-nowrap"
-                    title="Painel Administrativo SunLab"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-blue-700 shrink-0" />
-                    <span className="hidden sm:inline whitespace-nowrap">Painel Admin</span>
-                  </NavLink>
-                ) : (
-                  <NavLink
-                    to="/orders"
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border border-zinc-200 text-xs font-medium transition-colors shrink-0 whitespace-nowrap"
-                    title="Minha Conta e Pedidos"
-                  >
-                    <User className="w-4 h-4 text-blue-600 shrink-0" />
-                    <span className="hidden sm:inline truncate max-w-[100px] whitespace-nowrap">{user.name.split(' ')[0]}</span>
-                  </NavLink>
-                )}
-
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="flex items-center gap-1 px-2.5 py-2 rounded-xl bg-zinc-100 hover:bg-red-50 hover:text-red-700 hover:border-red-200 text-zinc-600 border border-zinc-200 text-xs font-semibold transition-colors cursor-pointer shrink-0 whitespace-nowrap"
-                  title="Sair da conta"
-                >
-                  <LogOut className="w-3.5 h-3.5 shrink-0" />
-                  <span className="hidden md:inline whitespace-nowrap">Sair</span>
-                </button>
-              </div>
-            ) : (
-              <NavLink
-                to="/login"
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border border-zinc-200 text-xs font-semibold transition-colors cursor-pointer shrink-0 whitespace-nowrap"
-                title="Entrar na Conta"
-              >
-                <User className="w-4 h-4 text-zinc-600 shrink-0" />
-                <span className="hidden sm:inline whitespace-nowrap">Entrar</span>
-              </NavLink>
-            )}
-
-            {/* Cart Trigger - SunLab Ocean Navy & Solar Amber */}
-            <button
-              onClick={openCart}
-              className="relative p-2 sm:px-3 sm:py-2 rounded-xl bg-slate-100 hover:bg-amber-50 text-[#0a2540] border border-slate-200 hover:border-amber-300 transition-all cursor-pointer flex items-center gap-2 shadow-xs shrink-0 whitespace-nowrap"
-              title="Abrir carrinho"
-            >
-              <ShoppingBag className="w-4 h-4 text-[#0a2540] shrink-0" />
-              <span className="text-xs font-semibold text-[#0a2540] hidden sm:inline whitespace-nowrap">
-                Carrinho
-              </span>
-              {totalItems > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 text-white text-[11px] font-bold flex items-center justify-center border-2 border-white shadow-xs animate-bounce">
-                  {totalItems}
-                </span>
-              )}
-            </button>
-
-            {/* Mobile Hamburger Button */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden p-2 sm:p-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 text-zinc-700 transition-colors cursor-pointer shrink-0"
-              title="Menu de navegação"
-            >
-              {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
-          </div>
-
         </div>
-
-        {/* Mobile Navigation Drawer */}
-        {isMobileMenuOpen && (
-          <div className="lg:hidden bg-white border-b border-zinc-200 px-5 py-6 space-y-4 animate-in slide-in-from-top duration-200 shadow-md">
-            <nav className="flex flex-col space-y-2">
-              <Link
-                to="/"
-                className="px-3 py-2.5 rounded-xl text-base font-semibold text-zinc-800 hover:bg-zinc-100 flex items-center justify-between"
-              >
-                <span>Início</span>
-              </Link>
-              <Link
-                to="/catalog"
-                className="px-3 py-2.5 rounded-xl text-base font-semibold text-zinc-800 hover:bg-zinc-100 flex items-center justify-between"
-              >
-                <span>Loja Completa</span>
-                <ArrowUpRight className="w-4 h-4 text-zinc-400" />
-              </Link>
-              <div className="pl-3 py-1 space-y-1 border-l-2 border-zinc-300 my-1">
-                {CATEGORIES.filter(c => c.id !== 'all').map(cat => (
-                  <Link
-                    key={cat.id}
-                    to={`/catalog?cat=${cat.id}`}
-                    className="block py-1.5 px-3 text-sm text-zinc-600 hover:text-zinc-900"
-                  >
-                    {cat.name}
-                  </Link>
-                ))}
-              </div>
-              <Link
-                to="/custom"
-                className="px-3 py-2.5 rounded-xl text-base font-semibold text-zinc-800 bg-zinc-100 border border-zinc-200 flex items-center justify-between"
-              >
-                <span>Projetos Personalizados</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-zinc-200 text-zinc-700">Sob Medida</span>
-              </Link>
-              <Link
-                to="/aboutus"
-                className="px-3 py-2.5 rounded-xl text-base font-semibold text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100"
-              >
-                Sobre a SunLab
-              </Link>
-              <Link
-                to="/contact"
-                className="px-3 py-2.5 rounded-xl text-base font-semibold text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100"
-              >
-                Contato
-              </Link>
-              <Link
-                to="/orders"
-                className="px-3 py-2.5 rounded-xl text-base font-semibold text-blue-900 bg-blue-50/70 border border-blue-200 flex items-center justify-between"
-              >
-                <span>Meus Pedidos Comprados</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-800">Status 3D</span>
-              </Link>
-              {isAdmin && (
-                <Link
-                  to="/admin"
-                  className="px-3 py-2.5 rounded-xl text-base font-bold text-blue-900 bg-blue-50 border border-blue-200 flex items-center justify-between"
-                >
-                  <span>Painel Administrativo</span>
-                  <ShieldCheck className="w-4 h-4 text-blue-600" />
-                </Link>
-              )}
-              {user ? (
-                <div className="pt-2 border-t border-zinc-200 space-y-2">
-                  <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 rounded-xl border border-zinc-200 text-xs">
-                    <div className="truncate">
-                      <span className="text-zinc-500 block text-[10px]">Conectado como:</span>
-                      <strong className="text-zinc-900 truncate">{user.name}</strong>
-                    </div>
-                    {isAdmin && (
-                      <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-[10px]">
-                        Admin
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      logout();
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-sm font-semibold transition-colors cursor-pointer"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    <span>Sair da Conta</span>
-                  </button>
-                </div>
-              ) : (
-                <Link
-                  to="/login"
-                  className="px-3 py-2.5 rounded-xl text-base font-semibold text-zinc-800 bg-zinc-100 border border-zinc-200 flex items-center justify-between"
-                >
-                  <span>Entrar / Cadastrar</span>
-                  <User className="w-4 h-4 text-zinc-600" />
-                </Link>
-              )}
-            </nav>
-
-            <div className="pt-3 border-t border-zinc-200 flex gap-2">
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  openSearch();
-                }}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-100 border border-zinc-200 text-sm font-medium text-zinc-800"
-              >
-                <Search className="w-4 h-4 text-zinc-500" />
-                <span>Buscar Produtos</span>
-              </button>
-            </div>
-          </div>
-        )}
-      </header>
-    </>
+      )}
+    </header>
   );
 };
 

@@ -10,6 +10,7 @@ import { CartDrawer } from "@/components/CartDrawer";
 import { CheckoutModal } from "@/components/CheckoutModal";
 import { QuickViewModal } from "@/components/QuickViewModal";
 import { SearchModal } from "@/components/SearchModal";
+import { Preloader } from "@/components/Preloader";
 
 // Pages
 import Home from "@/pages/Home";
@@ -40,6 +41,8 @@ ReactDOM.createRoot(root).render(
       <ProductProvider>
         <CartProvider>
           <div className="min-h-screen flex flex-col bg-white text-zinc-900 font-sans">
+            {/* Logo em camadas: só na 1ª visita da sessão */}
+            <Preloader />
             <Navbar />
             
             <main className="flex-1 w-full">

@@ -16,7 +16,8 @@ import {
   Sparkles,
   LogOut,
   Lock,
-  LogIn
+  LogIn,
+  Settings
 } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
@@ -376,11 +377,11 @@ export const Orders: React.FC = () => {
         {/* Status Tabs */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
           {[
-            { id: 'all', label: 'Todos' },
-            { id: 'Pendente', label: '🕒 Pendentes' },
-            { id: 'Em Produção 3D', label: '⚙️ Em Produção' },
-            { id: 'Enviado', label: '✨ Finalizados' },
-            { id: 'Concluído', label: '✅ Concluídos' }
+            { id: 'all', label: 'Todos', icon: null },
+            { id: 'Pendente', label: 'Pendentes', icon: Clock },
+            { id: 'Em Produção 3D', label: 'Em Produção', icon: Settings },
+            { id: 'Enviado', label: 'Finalizados', icon: Sparkles },
+            { id: 'Concluído', label: 'Concluídos', icon: CheckCircle2 }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -391,7 +392,10 @@ export const Orders: React.FC = () => {
                   : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:text-zinc-900 border border-zinc-200'
               }`}
             >
-              {tab.label}
+              <span className="inline-flex items-center gap-1">
+                {tab.icon && <tab.icon aria-hidden="true" className="w-3.5 h-3.5" />}
+                {tab.label}
+              </span>
             </button>
           ))}
         </div>

@@ -27,8 +27,11 @@ import {
   Copy,
   Check,
   ShieldCheck,
-  Smartphone
+  Smartphone,
+  MapPin,
+  Zap
 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/custom-checkbox';
 import type { Product } from '@/data/products';
 import { useProducts } from '@/context/ProductContext';
 import { useAuth } from '@/context/AuthContext';
@@ -1185,7 +1188,7 @@ export const AdminProducts: React.FC = () => {
                               )}
                             </div>
                             <div className="text-[10px] text-zinc-400 mt-1 max-w-[200px] truncate" title={o.shippingAddress}>
-                              📍 {o.shippingAddress}
+                              <MapPin aria-hidden="true" className="inline w-3 h-3 mr-0.5 align-[-1px]" />{o.shippingAddress}
                             </div>
                           </td>
 
@@ -1486,7 +1489,7 @@ export const AdminProducts: React.FC = () => {
                     ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                     : 'bg-zinc-100 text-zinc-600 border border-zinc-300'
                 }`}>
-                  ⚡
+                  <Zap aria-hidden="true" className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
@@ -1498,7 +1501,10 @@ export const AdminProducts: React.FC = () => {
                         ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                         : 'bg-amber-50 text-amber-800 border-amber-300'
                     }`}>
-                      {isSupabaseConfigured() ? '🟢 Conectado na Nuvem' : '⚪ Aguardando Chaves de Conexão'}
+                      <span className="inline-flex items-center gap-1">
+                        <span aria-hidden="true" className={`w-2 h-2 rounded-full ${isSupabaseConfigured() ? 'bg-emerald-500' : 'bg-zinc-400'}`} />
+                        {isSupabaseConfigured() ? 'Conectado na Nuvem' : 'Aguardando Chaves de Conexão'}
+                      </span>
                     </span>
                   </div>
                   <p className="text-xs text-zinc-500 mt-1 max-w-xl">
@@ -1938,41 +1944,33 @@ export const AdminProducts: React.FC = () => {
               {/* Status Toggles */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
                 <label className="flex items-center gap-2 p-2.5 rounded-xl bg-zinc-50 border border-zinc-200 cursor-pointer text-xs text-zinc-700">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={editingProduct.inStock ?? true}
                     onChange={(e) => setEditingProduct({ ...editingProduct, inStock: e.target.checked })}
-                    className="rounded text-zinc-800"
                   />
                   <span>Em Estoque</span>
                 </label>
 
                 <label className="flex items-center gap-2 p-2.5 rounded-xl bg-zinc-50 border border-zinc-200 cursor-pointer text-xs text-zinc-700">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={editingProduct.featured ?? false}
                     onChange={(e) => setEditingProduct({ ...editingProduct, featured: e.target.checked })}
-                    className="rounded text-zinc-800"
                   />
                   <span>Em Destaque</span>
                 </label>
 
                 <label className="flex items-center gap-2 p-2.5 rounded-xl bg-zinc-50 border border-zinc-200 cursor-pointer text-xs text-zinc-700">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={editingProduct.bestseller ?? false}
                     onChange={(e) => setEditingProduct({ ...editingProduct, bestseller: e.target.checked })}
-                    className="rounded text-zinc-800"
                   />
                   <span>Mais Vendido</span>
                 </label>
 
                 <label className="flex items-center gap-2 p-2.5 rounded-xl bg-zinc-50 border border-zinc-200 cursor-pointer text-xs text-zinc-700">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={editingProduct.newArrival ?? false}
                     onChange={(e) => setEditingProduct({ ...editingProduct, newArrival: e.target.checked })}
-                    className="rounded text-zinc-800"
                   />
                   <span>Lançamento</span>
                 </label>

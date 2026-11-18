@@ -22,7 +22,7 @@ export const SunLabLogo: React.FC<SunLabLogoProps> = ({
     <div className={`flex items-center select-none ${className}`}>
       <img
         src="/sunlab-logo.png"
-        alt="SunLab — Impressões 3D"
+        alt="SunLab Impressões 3D"
         className={`${sizeMap[size]} w-auto object-contain transition-transform duration-300 hover:scale-105`}
       />
     </div>
