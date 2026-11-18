@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { X, Trash2, Plus, Minus, ShoppingBag, Tag } from 'lucide-react';
+import { X, Trash2, Plus, Minus, ShoppingBag } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { ButtonWithIcon } from '@/components/ui/button-with-icon';
 import { cn } from '@/lib/utils';
@@ -11,7 +11,7 @@ import { imageIndexForColor } from '@/lib/color-image';
  * Carrinho lateral no design da SunLab (sem a "cara de IA" de caixas cinza e azuis soltos):
  * - Painel claro; título leve com contador âmbar; itens em lista com linhas finas (sem cartões),
  *   foto com o fundo neutro dos cards, quantidade em pílula (igual à página de produto).
- * - Fechamento numa faixa areia: cupom em pílula, resumo e o botão padrão do site.
+ * - Fechamento numa faixa areia: resumo e o botão padrão do site.
  * - Acessível: role="dialog" + aria-modal, título ligado, Esc fecha, foco preso no painel e
  *   devolvido ao sair, página por trás não rola. "Reduzir movimento": aparece sem deslizar.
  * - Contraste ≥ 4,5:1; alvos ≥ 40px; grid de 4px.
@@ -21,15 +21,13 @@ const formatPrice = (v: number) => `R$ ${v.toFixed(2).replace('.', ',')}`;
 export const CartDrawer: React.FC = () => {
   const {
     cart, isCartOpen, closeCart, removeFromCart, updateQuantity, clearCart,
-    changeItemColor, subtotal, discount, total, appliedCoupon, applyCoupon, removeCoupon, totalItems, openCheckout
+    changeItemColor, subtotal, total, totalItems, openCheckout
   } = useCart();
   const reduceMotion = useReducedMotion();
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
-  const [couponInput, setCouponInput] = useState('');
-  const [couponFeedback, setCouponFeedback] = useState<{ message: string; isError: boolean } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
   // Trava a rolagem, foca o "fechar", Esc fecha e o Tab fica dentro do painel.
@@ -65,14 +63,6 @@ export const CartDrawer: React.FC = () => {
       setConfirmClear(true);
       setTimeout(() => setConfirmClear(false), 3500);
     }
-  };
-
-  const handleApplyCoupon = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!couponInput.trim()) return;
-    const res = applyCoupon(couponInput);
-    setCouponFeedback({ message: res.message, isError: !res.success });
-    if (res.success) setCouponInput('');
   };
 
   return (
@@ -249,65 +239,15 @@ export const CartDrawer: React.FC = () => {
             {/* Fechamento (areia) */}
             {cart.length > 0 && (
               <footer className="bg-[#F6F1E7] px-6 pb-6 pt-5">
-                {appliedCoupon ? (
-                  <div className="flex h-12 items-center justify-between rounded-full bg-white pl-4 pr-1 ring-1 ring-inset ring-emerald-300">
-                    <span className="flex items-center gap-2 text-sm leading-5 text-emerald-900">
-                      <Tag aria-hidden="true" className="h-4 w-4" />
-                      Cupom <strong className="font-semibold">{appliedCoupon}</strong> aplicado
-                    </span>
-                    <button
-                      type="button"
-                      onClick={removeCoupon}
-                      className="inline-flex h-10 items-center rounded-full px-4 text-sm font-semibold text-zinc-700 hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
-                    >
-                      Remover
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={handleApplyCoupon}>
-                    <label htmlFor="cupom" className="sr-only">Cupom de desconto</label>
-                    <div className="flex h-12 items-center gap-2 rounded-full bg-white pl-4 pr-1 ring-1 ring-inset ring-zinc-300 focus-within:ring-2 focus-within:ring-[#0A2540]">
-                      <Tag aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-500" />
-                      <input
-                        id="cupom"
-                        type="text"
-                        value={couponInput}
-                        onChange={e => setCouponInput(e.target.value)}
-                        placeholder="Cupom de desconto"
-                        autoCapitalize="characters"
-                        className="h-full min-w-0 flex-1 bg-transparent text-base uppercase text-zinc-900 placeholder:normal-case placeholder:text-zinc-500 outline-none"
-                      />
-                      <button
-                        type="submit"
-                        className="inline-flex h-10 shrink-0 items-center rounded-full bg-[#0A2540] px-4 text-sm font-semibold text-white hover:bg-[#0F3A66] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0A2540] cursor-pointer"
-                      >
-                        Aplicar
-                      </button>
-                    </div>
-                  </form>
-                )}
-                {couponFeedback && (
-                  <p role="status" className={cn('mt-2 text-sm leading-5', couponFeedback.isError ? 'text-rose-700' : 'text-emerald-800')}>
-                    {couponFeedback.message}
-                  </p>
-                )}
-
-                <dl className="mt-5 flex flex-col gap-2 text-sm leading-5 text-zinc-700">
+                <dl className="flex flex-col gap-2 text-sm leading-5 text-zinc-700">
                   <div className="flex justify-between">
                     <dt>Subtotal</dt>
                     <dd className="font-medium text-zinc-900">{formatPrice(subtotal)}</dd>
                   </div>
-                  {discount > 0 && (
-                    <div className="flex justify-between text-emerald-800">
-                      <dt>Desconto do cupom</dt>
-                      <dd className="font-medium">− {formatPrice(discount)}</dd>
-                    </div>
-                  )}
                   <div className="mt-2 flex items-baseline justify-between border-t border-zinc-300/80 pt-4">
                     <dt className="text-base font-semibold text-zinc-900">Total</dt>
                     <dd className="font-display text-[32px] font-light leading-10 text-[#0A2540]">{formatPrice(total)}</dd>
                   </div>
-                  <p className="text-right text-xs leading-4 text-zinc-600">ou até 3x de {formatPrice(total / 3)} sem juros</p>
                 </dl>
 
                 <ButtonWithIcon onClick={openCheckout} className="mt-5 w-full">Finalizar pedido</ButtonWithIcon>

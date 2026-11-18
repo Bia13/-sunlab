@@ -5,7 +5,8 @@ let memorySettings = global._sunlab_settings || {
   pix_key_type: 'phone',
   pix_merchant_name: 'SunLab 3D',
   pix_merchant_city: 'SANTOS',
-  store_whatsapp: '13996061681'
+  store_whatsapp: '13996061681',
+  store_email: 'sunlab013@gmail.com'
 };
 global._sunlab_settings = memorySettings;
 
@@ -26,13 +27,14 @@ export default async function handler(req, res) {
   if (req.method === 'POST' || req.method === 'PUT') {
     try {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      const { pix_key, pix_key_type, pix_merchant_name, pix_merchant_city, store_whatsapp } = body;
+      const { pix_key, pix_key_type, pix_merchant_name, pix_merchant_city, store_whatsapp, store_email } = body;
       
       if (pix_key !== undefined) memorySettings.pix_key = pix_key.trim();
       if (pix_key_type !== undefined) memorySettings.pix_key_type = pix_key_type.trim();
       if (pix_merchant_name !== undefined) memorySettings.pix_merchant_name = pix_merchant_name.trim();
       if (pix_merchant_city !== undefined) memorySettings.pix_merchant_city = pix_merchant_city.trim();
       if (store_whatsapp !== undefined) memorySettings.store_whatsapp = store_whatsapp.trim();
+      if (store_email !== undefined) memorySettings.store_email = store_email.trim();
 
       return res.status(200).json({ success: true, settings: memorySettings });
     } catch (err) {

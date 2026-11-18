@@ -470,8 +470,8 @@ export const Orders: React.FC = () => {
                 `Gostaria de informações e acompanhamento sobre a produção do meu pedido:\n\n` +
                 `🔖 *CÓDIGO DO PEDIDO:* #${o.orderNumber}\n` +
                 `📊 *Status Atual:* ${o.status}\n` +
-                `💰 *Valor Total Pago:* R$ ${Number(o.totalAmount).toFixed(2).replace('.', ',')} (Pix 5% OFF)\n` +
-                `💳 *Pagamento:* ${o.paymentMethod || 'Pix Instantâneo (5% OFF)'}\n\n` +
+                `💰 *Valor Total:* R$ ${Number(o.totalAmount).toFixed(2).replace('.', ',')}\n` +
+                `💳 *Pagamento:* ${o.paymentMethod || 'Pix'}\n\n` +
                 `👤 *MEUS DADOS:*\n` +
                 `• *Nome:* ${o.customerName}\n` +
                 `• *E-mail:* ${o.customerEmail}\n` +

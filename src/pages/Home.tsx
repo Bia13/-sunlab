@@ -67,13 +67,13 @@ export const Home: React.FC = () => {
     switchTimer.current = window.setTimeout(() => setSwitching(false), 480);
   };
 
-  // Destaques vão para o carrossel; a grade mostra o catálogo com filtro.
+  // Destaques vão para o carrossel; a grade mostra o catálogo todo com filtro (destaques primeiro).
   const featuredProducts = products.filter(p => p.featured);
   const gridProducts = products.filter(p => {
     if (activeTab === 'bestsellers') return p.bestseller;
     if (activeTab === 'newArrivals') return p.newArrival;
     return true;
-  }).slice(0, 8);
+  }).sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)));
 
   return (
     <div className="flex w-full flex-col overflow-x-clip">

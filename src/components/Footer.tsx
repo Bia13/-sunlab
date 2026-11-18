@@ -117,10 +117,10 @@ export const Footer: React.FC = () => {
             id="newsletter-title"
             className="mt-4 font-display text-[32px] font-extrabold leading-10 tracking-tight sm:text-5xl sm:leading-[56px]"
           >
-            Novidades e 10% off
+            Novidades da SunLab
           </h2>
           <p className="mt-4 text-base leading-6 text-white/80">
-            Deixe seu e-mail e ganhe um cupom para a primeira compra.
+            Deixe seu e-mail e saiba antes das coleções e peças novas.
           </p>
 
           <form onSubmit={handleSubscribe} className="mt-8 w-full max-w-md">
@@ -158,7 +158,7 @@ export const Footer: React.FC = () => {
                     : 'bg-white/8 text-white/80 hover:bg-white/16 hover:text-white'
                 )}
               >
-                Quero o cupom
+                Quero receber
                 <ArrowUpRight
                   aria-hidden="true"
                   className={cn('h-4 w-4 transition-transform duration-300 motion-reduce:transition-none', emailValid && 'translate-x-0.5 -translate-y-0.5')}
@@ -169,7 +169,7 @@ export const Footer: React.FC = () => {
               {subscribed && (
                 <span className="inline-flex items-center gap-2">
                   <Check aria-hidden="true" className="h-4 w-4" />
-                  Pronto! Use o cupom <strong className="font-semibold text-white">SUNLAB10</strong> no carrinho.
+                  Pronto! E-mail cadastrado.
                 </span>
               )}
             </p>

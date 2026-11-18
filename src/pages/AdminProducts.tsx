@@ -37,14 +37,17 @@ import { useProducts } from '@/context/ProductContext';
 import { useAuth } from '@/context/AuthContext';
 import SunLabLogo from '@/components/SunLabLogo';
 import { generatePixPayload, generatePixQRCode } from '../utils/pix';
-import { isSupabaseConfigured, fetchSupabaseOrders, upsertSupabaseOrder, deleteSupabaseOrder, upsertSupabaseProduct } from '@/lib/supabase';
+import { isSupabaseConfigured, fetchSupabaseOrders, upsertSupabaseOrder, deleteSupabaseOrder, upsertSupabaseProduct, fetchSupabaseSettings, saveSupabaseSetting, syncOrderToErp3d, deleteOrderFromErp3d } from '@/lib/supabase';
 
 interface OrderItem {
+  productId?: string;
   name: string;
+  slug?: string;
   color?: string;
   size?: string;
   quantity: number;
   unitPrice: number;
+  unitCost?: number;
 }
 
 interface Order {
@@ -94,7 +97,8 @@ export const AdminProducts: React.FC = () => {
     pix_key_type: 'phone',
     pix_merchant_name: 'SunLab 3D',
     pix_merchant_city: 'SANTOS',
-    store_whatsapp: '13996061681'
+    store_whatsapp: '13996061681',
+    store_email: 'sunlab013@gmail.com'
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [testQrCodeUrl, setTestQrCodeUrl] = useState('');
@@ -103,6 +107,20 @@ export const AdminProducts: React.FC = () => {
 
   const fetchSettings = async () => {
     try {
+      if (isSupabaseConfigured()) {
+        const s = await fetchSupabaseSettings();
+        if (s && s.pix_key) {
+          setPixSettings({
+            pix_key: s.pix_key || '+5513996061681',
+            pix_key_type: s.pix_key_type || 'phone',
+            pix_merchant_name: s.pix_merchant_name || 'SunLab 3D',
+            pix_merchant_city: s.pix_merchant_city || 'SANTOS',
+            store_whatsapp: s.store_whatsapp || '13996061681',
+            store_email: s.store_email || 'sunlab013@gmail.com'
+          });
+          return;
+        }
+      }
       const res = await fetch('/api/settings');
       if (res.ok) {
         const data = await res.json();
@@ -111,7 +129,8 @@ export const AdminProducts: React.FC = () => {
           pix_key_type: data.pix_key_type || 'phone',
           pix_merchant_name: data.pix_merchant_name || 'SunLab 3D',
           pix_merchant_city: data.pix_merchant_city || 'SANTOS',
-          store_whatsapp: data.store_whatsapp || '13996061681'
+          store_whatsapp: data.store_whatsapp || '13996061681',
+          store_email: data.store_email || 'sunlab013@gmail.com'
         });
       }
     } catch (e) {
@@ -143,6 +162,16 @@ export const AdminProducts: React.FC = () => {
     e.preventDefault();
     setSavingSettings(true);
     try {
+      if (isSupabaseConfigured()) {
+        await Promise.all([
+          saveSupabaseSetting('pix_key', pixSettings.pix_key),
+          saveSupabaseSetting('pix_key_type', pixSettings.pix_key_type),
+          saveSupabaseSetting('pix_merchant_name', pixSettings.pix_merchant_name),
+          saveSupabaseSetting('pix_merchant_city', pixSettings.pix_merchant_city),
+          saveSupabaseSetting('store_whatsapp', pixSettings.store_whatsapp),
+          saveSupabaseSetting('store_email', pixSettings.store_email)
+        ]);
+      }
       const token = localStorage.getItem('sunlab_auth_token');
       const res = await fetch('/api/settings', {
         method: 'POST',
@@ -152,7 +181,7 @@ export const AdminProducts: React.FC = () => {
         },
         body: JSON.stringify(pixSettings)
       });
-      if (res.ok) {
+      if (res.ok || isSupabaseConfigured()) {
         setActionFeedback({
           isError: false,
           message: 'Chave Pix e configurações salvas com sucesso! O checkout dos clientes já está usando essa chave.'
@@ -218,7 +247,7 @@ export const AdminProducts: React.FC = () => {
             customerEmail: o.customerEmail || '',
             customerPhone: o.customerPhone || '',
             shippingAddress: o.shippingAddress || 'Endereço registrado no checkout',
-            paymentMethod: o.paymentMethod || 'Pix Instantâneo (5% OFF)',
+            paymentMethod: o.paymentMethod || 'Pix',
             items: o.items || [],
             totalAmount: Number(o.totalAmount) || 0,
             status: o.status || 'Pendente',
@@ -261,11 +290,17 @@ export const AdminProducts: React.FC = () => {
     setActionFeedback({ message: `Status do pedido atualizado para: ${newStatus}` });
     setTimeout(() => setActionFeedback(null), 3500);
 
-    // 3. Sincronizar com Supabase se configurado
-    if (isSupabaseConfigured()) {
-      const match = orders.find(o => o.id === orderId || o.orderNumber === orderId);
-      if (match) {
-        upsertSupabaseOrder({ ...match, status: newStatus }).catch(() => {});
+    // 3. Sincronizar com Supabase e MeuGasto3D (ERP3D)
+    const match = orders.find(o => o.id === orderId || o.orderNumber === orderId);
+    if (match) {
+      const updatedOrder = { ...match, status: newStatus };
+      if (isSupabaseConfigured()) {
+        upsertSupabaseOrder(updatedOrder).catch(() => {});
+      }
+      if (newStatus === 'Pendente' || newStatus === 'Cancelado') {
+        deleteOrderFromErp3d(match.orderNumber).catch(() => {});
+      } else {
+        syncOrderToErp3d(updatedOrder).catch(() => {});
       }
     }
 
@@ -303,9 +338,12 @@ export const AdminProducts: React.FC = () => {
       setActionFeedback({ message: `Pedido ${orderNumber} removido com sucesso!` });
       setTimeout(() => setActionFeedback(null), 3500);
 
-      // 3. Sincronizar com Supabase se configurado
+      // 3. Sincronizar remoção com Supabase e MeuGasto3D (ERP3D)
       if (isSupabaseConfigured()) {
         deleteSupabaseOrder(orderId || orderNumber).catch(() => {});
+      }
+      if (orderNumber) {
+        deleteOrderFromErp3d(orderNumber).catch(() => {});
       }
 
       // 4. Sincronizar com o backend
@@ -351,9 +389,14 @@ export const AdminProducts: React.FC = () => {
     setActionFeedback({ message: `Pedido ${editingOrder.orderNumber} atualizado com sucesso!` });
     setTimeout(() => setActionFeedback(null), 3500);
 
-    // 3. Salvar no Supabase se configurado
+    // 3. Salvar no Supabase e sincronizar com MeuGasto3D (ERP3D)
     if (isSupabaseConfigured()) {
       upsertSupabaseOrder(editingOrder).catch(() => {});
+    }
+    if (editingOrder.status === 'Pendente' || editingOrder.status === 'Cancelado') {
+      deleteOrderFromErp3d(editingOrder.orderNumber).catch(() => {});
+    } else {
+      syncOrderToErp3d(editingOrder).catch(() => {});
     }
 
     // 4. Salvar no backend local / Vercel
@@ -1255,6 +1298,16 @@ export const AdminProducts: React.FC = () => {
                           {/* Actions */}
                           <td className="py-3.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              {o.status === 'Pendente' && (
+                                <button
+                                  onClick={() => handleUpdateOrderStatus(o.id, 'Confirmado')}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] transition-colors cursor-pointer inline-flex items-center gap-1 shadow-2xs"
+                                  title="Confirmar pagamento Pix recebido"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Confirmar Pagamento</span>
+                                </button>
+                              )}
                               <button
                                 onClick={() => handleOpenEditOrder(o)}
                                 className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors cursor-pointer"
@@ -1301,7 +1354,7 @@ export const AdminProducts: React.FC = () => {
               <div className="flex items-center gap-2">
                 <span className="text-xs text-zinc-500 font-medium">Status:</span>
                 <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300">
-                  Pix Ativo (5% OFF)
+                  Pix Ativo
                 </span>
               </div>
             </div>
@@ -1396,6 +1449,24 @@ export const AdminProducts: React.FC = () => {
                     />
                     <span className="text-[10px] text-zinc-400 mt-1 block">Máximo 15 caracteres sem acentos</span>
                   </div>
+                </div>
+
+                {/* E-mail para Receber Pedidos */}
+                <div>
+                  <label className="block text-xs font-bold text-zinc-800 mb-1.5">
+                    E-mail para Receber Formulários de Pedidos *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="seuemail@gmail.com"
+                    value={pixSettings.store_email}
+                    onChange={(e) => setPixSettings({ ...pixSettings, store_email: e.target.value })}
+                    className="w-full bg-zinc-50 focus:bg-white border border-zinc-300 rounded-xl px-3 py-2.5 text-xs text-zinc-900 font-medium focus:border-blue-500 outline-none"
+                  />
+                  <span className="text-[10px] text-zinc-500 mt-1 block">
+                    Cada pedido finalizado envia os dados de nome, telefone de contato e itens diretamente para este e-mail. *(No primeiro envio pelo FormSubmit, confirme o link de ativação enviado na sua caixa de entrada/spam).*
+                  </span>
                 </div>
 
                 {/* Botão de Salvar */}
@@ -2122,8 +2193,8 @@ export const AdminProducts: React.FC = () => {
                     onChange={(e) => setEditingOrder({ ...editingOrder, paymentMethod: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl border border-zinc-300 text-xs outline-none bg-white focus:border-blue-500"
                   >
+                    <option value="Pix">Pix</option>
                     <option value="WhatsApp (A Combinar)">WhatsApp (A Combinar)</option>
-                    <option value="Pix Instantâneo (5% OFF)">Pix Instantâneo (5% OFF)</option>
                     <option value="Cartão de Crédito">Cartão de Crédito</option>
                     <option value="Boleto Bancário">Boleto Bancário</option>
                     <option value="Retirada no Local">Retirada no Local</option>

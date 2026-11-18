@@ -1,22 +1,35 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
-import { X, Check, Copy, MessageCircle, Package, LogIn, Loader2 } from 'lucide-react';
+import { X, QrCode, Copy, Check, MessageCircle, Clock, Key, Package, LogIn, Loader2 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ButtonWithIcon } from '@/components/ui/button-with-icon';
 import { cn } from '@/lib/utils';
 import { useCart, type CartItem } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
-import { isSupabaseConfigured, upsertSupabaseOrder } from '@/lib/supabase';
+import { fetchSupabaseSettings, isSupabaseConfigured, upsertSupabaseOrder, syncOrderToErp3d } from '@/lib/supabase';
+import {
+  generatePixPayload,
+  generatePixQRCode,
+  DEFAULT_PIX_CONFIG,
+  type PixConfig
+} from '../utils/pix';
 
 export const CheckoutModal: React.FC = () => {
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const { isCheckoutOpen, closeCheckout, total, clearCart, cart } = useCart();
-  const [step, setStep] = useState<'form' | 'success'>('form');
+  const [step, setStep] = useState<'form' | 'payment' | 'success'>('form');
+  const [copiedPix, setCopiedPix] = useState(false);
+  const [copiedPixKey, setCopiedPixKey] = useState(false);
   const [copiedWhatsAppText, setCopiedWhatsAppText] = useState(false);
   const [orderNumber, setOrderNumber] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isLoadingCep, setIsLoadingCep] = useState(false);
+  const [storeEmail, setStoreEmail] = useState('sunlab013@gmail.com');
+  const [pixConfig, setPixConfig] = useState<PixConfig>(DEFAULT_PIX_CONFIG);
+  const [pixPayload, setPixPayload] = useState('');
+  const [pixQrCodeUrl, setPixQrCodeUrl] = useState('');
+  const [isGeneratingPix, setIsGeneratingPix] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(15 * 60);
   const [showErrors, setShowErrors] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
@@ -29,6 +42,7 @@ export const CheckoutModal: React.FC = () => {
     shippingAddress: string;
     paymentMethod: string;
     items: Array<{
+      productId?: string;
       name: string;
       slug?: string;
       image?: string;
@@ -36,6 +50,7 @@ export const CheckoutModal: React.FC = () => {
       size?: string;
       quantity: number;
       unitPrice: number;
+      unitCost?: number;
     }>;
     totalAmount: number;
   } | null>(null);
@@ -54,21 +69,13 @@ export const CheckoutModal: React.FC = () => {
     return null;
   };
 
-  // Address & Payer Form States (inicia vazio ou com os dados salvos da conta do usuário)
+  // Dados mínimos de identificação e contato
   const [formData, setFormData] = useState(() => {
     const saved = user?.email ? loadSavedProfile(user.email) : null;
     return {
       name: saved?.name || (user?.name && user.name !== 'SunLab Admin' && !user.name.includes('@') ? user.name : ''),
       email: user?.email || '',
-      phone: saved?.phone || '',
-      cpf: saved?.cpf || '',
-      cep: saved?.cep || '',
-      street: saved?.street || '',
-      number: saved?.number || '',
-      complement: saved?.complement || '',
-      neighborhood: saved?.neighborhood || '',
-      city: saved?.city || '',
-      state: saved?.state || ''
+      phone: saved?.phone || ''
     };
   });
 
@@ -89,15 +96,7 @@ export const CheckoutModal: React.FC = () => {
         ...prev,
         name: saved?.name || (user.name && user.name !== 'SunLab Admin' && !user.name.includes('@') ? user.name : prev.name || ''),
         email: user.email,
-        phone: saved?.phone || prev.phone || '',
-        cpf: saved?.cpf || prev.cpf || '',
-        cep: saved?.cep || prev.cep || '',
-        street: saved?.street || prev.street || '',
-        number: saved?.number || prev.number || '',
-        complement: saved?.complement || prev.complement || '',
-        neighborhood: saved?.neighborhood || prev.neighborhood || '',
-        city: saved?.city || prev.city || '',
-        state: saved?.state || prev.state || ''
+        phone: saved?.phone || prev.phone || ''
       }));
     }
   }, [user, isCheckoutOpen]);
@@ -109,6 +108,9 @@ export const CheckoutModal: React.FC = () => {
       setCompletedOrderData(null);
       setOrderNumber('');
       setIsProcessing(false);
+      setTimeLeft(15 * 60);
+      setCopiedPix(false);
+      setCopiedPixKey(false);
       setCopiedWhatsAppText(false);
       setShowErrors(false);
     }
@@ -127,7 +129,7 @@ export const CheckoutModal: React.FC = () => {
       const panel = panelRef.current;
       if (!panel) return;
       if (e.key === 'Escape') {
-        if (!panel.querySelector('[role="status"]')) closeCheckout();
+        closeCheckout();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -147,18 +149,105 @@ export const CheckoutModal: React.FC = () => {
     };
   }, [isCheckoutOpen, closeCheckout]);
 
-  // Formatação de CPF com máscara
-  const handleCpfChange = (val: string) => {
-    const raw = val.replace(/\D/g, '').slice(0, 11);
-    let formatted = raw;
-    if (raw.length > 9) {
-      formatted = `${raw.slice(0, 3)}.${raw.slice(3, 6)}.${raw.slice(6, 9)}-${raw.slice(9)}`;
-    } else if (raw.length > 6) {
-      formatted = `${raw.slice(0, 3)}.${raw.slice(3, 6)}.${raw.slice(6)}`;
-    } else if (raw.length > 3) {
-      formatted = `${raw.slice(0, 3)}.${raw.slice(3)}`;
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    if (step === 'payment' && timeLeft > 0) {
+      timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
     }
-    setFormData(prev => ({ ...prev, cpf: formatted }));
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [step, timeLeft]);
+
+  // Carregar configurações oficiais do Pix (Supabase prioritário, fallback API local)
+  useEffect(() => {
+    const loadPixSettings = async () => {
+      try {
+        if (isSupabaseConfigured()) {
+          const s = await fetchSupabaseSettings();
+          if (s) {
+            if (s.store_email) setStoreEmail(s.store_email);
+            if (s.pix_key) {
+              setPixConfig({
+                key: s.pix_key,
+                keyType: (s.pix_key_type as PixConfig['keyType']) || 'phone',
+                merchantName: s.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
+                merchantCity: s.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
+                whatsapp: s.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
+              });
+              return;
+            }
+          }
+        }
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+          const data = await res.json();
+          if (data) {
+            if (data.store_email) setStoreEmail(data.store_email);
+            if (data.pix_key) {
+              setPixConfig({
+                key: data.pix_key,
+                keyType: data.pix_key_type || 'phone',
+                merchantName: data.pix_merchant_name || DEFAULT_PIX_CONFIG.merchantName,
+                merchantCity: data.pix_merchant_city || DEFAULT_PIX_CONFIG.merchantCity,
+                whatsapp: data.store_whatsapp || DEFAULT_PIX_CONFIG.whatsapp
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Usando configurações padrão para o Pix:', e);
+      }
+    };
+    if (isCheckoutOpen) {
+      loadPixSettings();
+    }
+  }, [isCheckoutOpen]);
+
+  const payableAmount = completedOrderData?.totalAmount || total;
+
+  // Gerar dinamicamente o código Pix Copia e Cola e o QR Code oficial com o valor exato do pedido
+  useEffect(() => {
+    if (payableAmount > 0 && isCheckoutOpen) {
+      try {
+        setIsGeneratingPix(true);
+        const payload = generatePixPayload({
+          key: pixConfig.key,
+          keyType: pixConfig.keyType,
+          name: pixConfig.merchantName,
+          city: pixConfig.merchantCity,
+          amount: payableAmount,
+          txid: '***'
+        });
+        setPixPayload(payload);
+        generatePixQRCode(payload)
+          .then(url => {
+            setPixQrCodeUrl(url);
+            setIsGeneratingPix(false);
+          })
+          .catch(() => setIsGeneratingPix(false));
+      } catch (err) {
+        console.error('Erro gerando Pix BRCode:', err);
+        setIsGeneratingPix(false);
+      }
+    }
+  }, [payableAmount, pixConfig, isCheckoutOpen, step]);
+
+  const formatFriendlyKey = (k: string) => {
+    const raw = k.replace(/\D/g, '');
+    if (raw.length === 13 && raw.startsWith('55')) {
+      return `(${raw.slice(2, 4)}) ${raw.slice(4, 9)}-${raw.slice(9)}`;
+    }
+    if (raw.length === 11) {
+      return `(${raw.slice(0, 2)}) ${raw.slice(2, 7)}-${raw.slice(7)}`;
+    }
+    return k;
+  };
+
+  const formatTimer = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
   // Formatação de Telefone / WhatsApp com máscara
@@ -175,56 +264,6 @@ export const CheckoutModal: React.FC = () => {
     setFormData(prev => ({ ...prev, phone: formatted }));
   };
 
-  // Busca automática de endereço por CEP (ViaCEP)
-  const handleCepChange = async (val: string) => {
-    const raw = val.replace(/\D/g, '').slice(0, 8);
-    let formatted = raw;
-    if (raw.length > 5) {
-      formatted = `${raw.slice(0, 5)}-${raw.slice(5)}`;
-    }
-    setFormData(prev => ({ ...prev, cep: formatted }));
-
-    if (raw.length === 8) {
-      setIsLoadingCep(true);
-      try {
-        const res = await fetch(`https://viacep.com.br/ws/${raw}/json/`);
-        if (res.ok) {
-          const data = await res.json();
-          if (!data.erro) {
-            setFormData(prev => ({
-              ...prev,
-              street: data.logradouro || prev.street,
-              neighborhood: data.bairro || prev.neighborhood,
-              city: data.localidade || prev.city,
-              state: data.uf || prev.state
-            }));
-          }
-        }
-      } catch (e) {
-        console.warn('Erro ao consultar ViaCEP:', e);
-      } finally {
-        setIsLoadingCep(false);
-      }
-    }
-  };
-
-  // Validação simples de CPF
-  const isValidCPF = (cpf: string) => {
-    const clean = cpf.replace(/\D/g, '');
-    if (clean.length !== 11) return false;
-    if (/^(\d)\1{10}$/.test(clean)) return false;
-    let sum = 0;
-    for (let i = 0; i < 9; i++) sum += parseInt(clean.charAt(i), 10) * (10 - i);
-    let rev = 11 - (sum % 11);
-    if (rev === 10 || rev === 11) rev = 0;
-    if (rev !== parseInt(clean.charAt(9), 10)) return false;
-    sum = 0;
-    for (let i = 0; i < 10; i++) sum += parseInt(clean.charAt(i), 10) * (11 - i);
-    rev = 11 - (sum % 11);
-    if (rev === 10 || rev === 11) rev = 0;
-    return rev === parseInt(clean.charAt(10), 10);
-  };
-
   const handleCloseModal = () => {
     setStep('form');
     setCompletedOrderData(null);
@@ -232,21 +271,10 @@ export const CheckoutModal: React.FC = () => {
     closeCheckout();
   };
 
+  const phoneDigits = formData.phone.replace(/\D/g, '');
   const isProfileComplete = isAdmin
     ? true
-    : !user
-      ? Boolean(formData.name.trim())
-      : Boolean(
-          formData.name.trim() &&
-          formData.phone.trim() &&
-          formData.cpf.trim() &&
-          isValidCPF(formData.cpf) &&
-          formData.cep.trim() &&
-          formData.street.trim() &&
-          formData.number.trim() &&
-          formData.city.trim() &&
-          formData.state.trim()
-        );
+    : Boolean(formData.name.trim() && phoneDigits.length >= 10);
 
   // Gerador da mensagem completa e detalhada para o WhatsApp
   const generateWhatsAppMessage = (order: NonNullable<typeof completedOrderData>) => {
@@ -284,33 +312,34 @@ export const CheckoutModal: React.FC = () => {
     );
   };
 
-  const handleCompleteOrder = async (e?: React.FormEvent) => {
+  const handleCompleteOrder = async (e?: React.FormEvent, mode: 'pix' | 'admin_direct' = 'pix') => {
     if (e) e.preventDefault();
     if (!isProfileComplete || isProcessing) return;
 
     setIsProcessing(true);
     const itemsPayload = cart.map((item: CartItem) => ({
+      productId: item.product.id,
       name: item.product.name,
       slug: item.product.slug,
       image: item.product.images[0] || '',
       color: item.selectedColor.name,
       size: item.selectedSize || 'Padrão',
       quantity: item.quantity,
-      unitPrice: item.unitPrice
+      unitPrice: item.unitPrice,
+      unitCost: Number((item.product.specs as any)?.cost) || 0
     }));
 
     let confirmedOrderNumber = orderNumber || `SLB-${Math.floor(100000 + Math.random() * 900000)}`;
-    const finalPaymentMethodLabel = isAdmin ? 'Venda Direta (Admin)' : 'WhatsApp (A Combinar)';
+    const isDirectAdminSave = isAdmin && mode === 'admin_direct';
+    const finalPaymentMethodLabel = isDirectAdminSave ? 'Venda Direta (Admin)' : 'Pix';
     const payableTotal = total;
 
     const finalCustomerName = formData.name.trim() || (isAdmin ? 'Venda Direta (Admin)' : 'Cliente');
     const finalCustomerEmail = formData.email.trim() || user?.email || (isAdmin ? 'admin@sunlab.com.br' : 'visitante@sunlab.com.br');
     const finalCustomerPhone = formData.phone.trim();
-
-    const hasAddress = Boolean(formData.street.trim() || formData.city.trim() || formData.cep.trim());
-    const shippingAddr = hasAddress
-      ? `${formData.street || 'Não informado'}, nº ${formData.number || 'S/N'}${formData.complement ? ' (' + formData.complement + ')' : ''}${formData.neighborhood ? ', ' + formData.neighborhood : ''} — ${formData.city || ''}/${formData.state || ''}${formData.cep ? ` (CEP: ${formData.cep})` : ''}`
-      : (isAdmin ? 'Venda Direta / Sem endereço informado' : 'A combinar via WhatsApp');
+    const shippingAddr = isDirectAdminSave && !finalCustomerPhone
+      ? 'Venda Direta (Admin)'
+      : 'Contato via Telefone / WhatsApp';
 
     // Sincronizar criação do pedido com a API de pedidos (Vercel e Express)
     try {
@@ -354,6 +383,8 @@ export const CheckoutModal: React.FC = () => {
     setOrderNumber(confirmedOrderNumber);
     saveUserProfile(formData);
 
+    const initialOrderStatus = isDirectAdminSave ? 'Em Produção 3D' : 'Pendente';
+
     // Salvar permanentemente no Supabase (Nuvem) se configurado
     if (isSupabaseConfigured()) {
       upsertSupabaseOrder({
@@ -366,7 +397,7 @@ export const CheckoutModal: React.FC = () => {
         paymentMethod: finalPaymentMethodLabel,
         items: itemsPayload,
         totalAmount: payableTotal,
-        status: 'Pendente'
+        status: initialOrderStatus
       }).catch(err => console.warn('[Supabase] Falha ao enviar pedido:', err));
     }
 
@@ -380,18 +411,76 @@ export const CheckoutModal: React.FC = () => {
       console.warn('Erro ao salvar localmente:', e);
     }
 
+    // Sincronizar venda com o MeuGasto3D (ERP3D) apenas quando já confirmada/paga (ex: Venda Direta Admin)
+    // Pedidos via Pix ("Pendente") entram no MeuGasto3D somente após confirmação do pagamento no painel Admin
+    const erpSyncTask = isDirectAdminSave
+      ? syncOrderToErp3d({
+          ...fullOrder,
+          status: initialOrderStatus
+        }).catch(err => console.warn('[ERP3D] Falha na sincronização da venda:', err))
+      : Promise.resolve(false);
+
+    const emailTask = (async () => {
+      if (!storeEmail || !storeEmail.includes('@')) return;
+      try {
+        const cleanDigits = finalCustomerPhone.replace(/\D/g, '');
+        const itemsDetailed = itemsPayload
+          .map((it, idx) => {
+            const tamPart = it.size && it.size !== 'Padrão' ? ` | Tam: ${it.size}` : '';
+            return `${idx + 1}. ${it.name} | Cor: ${it.color || 'Padrão'}${tamPart} | Qtd: ${it.quantity} un. | Valor: R$ ${(it.quantity * it.unitPrice).toFixed(2).replace('.', ',')}`;
+          })
+          .join('\n');
+        const whatsappMessage = generateWhatsAppMessage(fullOrder);
+
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(storeEmail.trim())}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            _subject: `🌊 NOVO PEDIDO REALIZADO — SUNLAB 3D (#${confirmedOrderNumber})`,
+            _template: 'box',
+            _captcha: 'false',
+            Mensagem_Completa: whatsappMessage,
+            Pedido: `#${confirmedOrderNumber}`,
+            Nome_do_Cliente: finalCustomerName,
+            Telefone_WhatsApp: finalCustomerPhone || 'Não informado',
+            Chamar_Cliente_no_WhatsApp: cleanDigits ? `https://wa.me/55${cleanDigits}` : 'Não informado',
+            Produtos_Escolhidos: itemsDetailed,
+            Valor_Total: `R$ ${payableTotal.toFixed(2).replace('.', ',')}`
+          })
+        });
+        clearTimeout(timer);
+      } catch (mailErr) {
+        console.warn('Aviso ao enviar formulário por e-mail:', mailErr);
+      }
+    })();
+
+    await Promise.allSettled([erpSyncTask, emailTask]);
+
     clearCart();
     setIsProcessing(false);
-    setStep('success');
-
-    // Redirecionar / Abrir conversa no WhatsApp automaticamente apenas para clientes
-    if (!isAdmin) {
-      const msg = generateWhatsAppMessage(fullOrder);
-      const waUrl = `https://wa.me/5513996061681?text=${encodeURIComponent(msg)}`;
-      try {
-        window.open(waUrl, '_blank');
-      } catch (_) {}
+    if (isDirectAdminSave) {
+      setStep('success');
+    } else {
+      setTimeLeft(15 * 60);
+      setStep('payment');
     }
+  };
+
+  const copyPixCode = () => {
+    if (!pixPayload) return;
+    navigator.clipboard.writeText(pixPayload);
+    setCopiedPix(true);
+    setTimeout(() => setCopiedPix(false), 2500);
+  };
+
+  const copyDirectPixKey = () => {
+    const rawToCopy = pixConfig.key.startsWith('+55') ? pixConfig.key.slice(3) : pixConfig.key;
+    navigator.clipboard.writeText(rawToCopy);
+    setCopiedPixKey(true);
+    setTimeout(() => setCopiedPixKey(false), 2500);
   };
 
   const copyWhatsAppDetails = () => {
@@ -404,22 +493,13 @@ export const CheckoutModal: React.FC = () => {
     }
   };
 
-  // Campos obrigatórios que faltam (só aparecem depois da primeira tentativa de enviar).
-  const fieldErrors: Partial<Record<keyof typeof formData, string>> = {};
+  // Erros dos campos (só aparecem depois da primeira tentativa de enviar).
+  const fieldErrors: Partial<Record<'name' | 'phone', string>> = {};
   if (!isAdmin) {
     if (!formData.name.trim()) fieldErrors.name = 'Diga como podemos te chamar.';
-    if (user) {
-      if (!formData.phone.trim()) fieldErrors.phone = 'Informe um WhatsApp com DDD.';
-      if (!formData.cpf.trim()) fieldErrors.cpf = 'Informe o CPF.';
-      else if (!isValidCPF(formData.cpf)) fieldErrors.cpf = 'Esse CPF não é válido.';
-      if (!formData.cep.trim()) fieldErrors.cep = 'Informe o CEP.';
-      if (!formData.street.trim()) fieldErrors.street = 'Informe a rua.';
-      if (!formData.number.trim()) fieldErrors.number = 'Informe o número.';
-      if (!formData.city.trim()) fieldErrors.city = 'Informe a cidade.';
-      if (!formData.state.trim()) fieldErrors.state = 'UF';
-    }
+    if (phoneDigits.length < 10) fieldErrors.phone = 'Informe um telefone com DDD.';
   }
-  const errorOf = (key: keyof typeof formData) => (showErrors ? fieldErrors[key] : undefined);
+  const errorOf = (key: 'name' | 'phone') => (showErrors ? fieldErrors[key] : undefined);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -429,10 +509,10 @@ export const CheckoutModal: React.FC = () => {
       if (first) document.getElementById(`co-${first}`)?.focus();
       return;
     }
-    handleCompleteOrder();
+    handleCompleteOrder(undefined, 'pix');
   };
 
-  const field = (key: keyof typeof formData) => ({
+  const field = (key: 'name' | 'phone') => ({
     id: `co-${key}`,
     'aria-invalid': errorOf(key) ? true : undefined,
     'aria-describedby': errorOf(key) ? `co-${key}-error` : undefined,
@@ -440,7 +520,15 @@ export const CheckoutModal: React.FC = () => {
   });
 
   const itemCount = cart.reduce((n, i) => n + i.quantity, 0);
-  const canClose = step !== 'success' && !isProcessing;
+  const whatsappOrderUrl = completedOrderData
+    ? `https://wa.me/5513996061681?text=${encodeURIComponent(generateWhatsAppMessage(completedOrderData))}`
+    : 'https://wa.me/5513996061681';
+
+  const eyebrow = step === 'form' ? 'Finalizar pedido' : `Pedido #${orderNumber}`;
+  const title =
+    step === 'form' ? <>Quase <span className="text-amber-700">pronto.</span></>
+    : step === 'payment' ? <>Pague com <span className="text-amber-700">Pix.</span></>
+    : <>Venda <span className="text-amber-700">salva.</span></>;
 
   return (
     <AnimatePresence>
@@ -452,7 +540,7 @@ export const CheckoutModal: React.FC = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => canClose && handleCloseModal()}
+            onClick={() => step === 'form' && !isProcessing && handleCloseModal()}
           />
 
           <motion.div
@@ -471,14 +559,10 @@ export const CheckoutModal: React.FC = () => {
               <div>
                 <p className="flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-zinc-600">
                   <span aria-hidden="true" className="h-px w-6 bg-amber-500" />
-                  {step === 'form' ? 'Finalizar pedido' : `Pedido #${orderNumber}`}
+                  {eyebrow}
                 </p>
                 <h2 id="checkout-title" className="mt-3 font-display text-[28px] font-light leading-9 tracking-tight text-[#0A2540]">
-                  {step === 'form' ? (
-                    <>Quase <span className="text-amber-700">pronto.</span></>
-                  ) : (
-                    <>Pedido <span className="text-amber-700">registrado.</span></>
-                  )}
+                  {title}
                 </h2>
               </div>
               <button
@@ -493,9 +577,9 @@ export const CheckoutModal: React.FC = () => {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 sm:px-8 sm:pb-8">
-              {step === 'form' ? (
+              {/* 1. Identificação */}
+              {step === 'form' && (
                 <form onSubmit={onSubmit} noValidate className="flex flex-col gap-6">
-                  {/* Quem está comprando */}
                   {user ? (
                     <div className="flex items-center gap-3 rounded-2xl bg-[#F6F1E7] p-4">
                       <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#0A2540] text-sm font-semibold text-amber-300">
@@ -511,9 +595,7 @@ export const CheckoutModal: React.FC = () => {
                     </div>
                   ) : (
                     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#F6F1E7] p-4">
-                      <p className="text-sm leading-5 text-zinc-800">
-                        Compra rápida: só o seu nome é obrigatório.
-                      </p>
+                      <p className="text-sm leading-5 text-zinc-800">Só precisamos do seu nome e telefone.</p>
                       <button
                         type="button"
                         onClick={() => {
@@ -530,63 +612,23 @@ export const CheckoutModal: React.FC = () => {
 
                   {isAdmin && (
                     <p className="rounded-2xl bg-amber-50 p-4 text-sm leading-5 text-amber-900 ring-1 ring-inset ring-amber-200">
-                      <strong className="font-semibold">Modo admin:</strong> dá para salvar a venda sem CPF, telefone ou endereço.
+                      <strong className="font-semibold">Modo admin:</strong> dá para salvar uma venda direta sem nome ou telefone.
                     </p>
                   )}
 
-                  {/* Dados */}
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Field id="co-name" label={user ? 'Nome de quem recebe' : 'Seu nome'} error={errorOf('name')} className="sm:col-span-2">
+                  <div className="flex flex-col gap-4">
+                    <Field id="co-name" label="Seu nome" error={errorOf('name')}>
                       <input {...field('name')} type="text" autoComplete="name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
                     </Field>
-                    <Field id="co-phone" label="WhatsApp" optional={!user} error={errorOf('phone')} className={user ? '' : 'sm:col-span-2'}>
+                    <Field id="co-phone" label="Telefone ou WhatsApp" error={errorOf('phone')} help="É por ele que confirmamos o pedido.">
                       <input {...field('phone')} type="tel" inputMode="tel" autoComplete="tel-national" placeholder="(13) 99999-9999" value={formData.phone} onChange={e => handlePhoneChange(e.target.value)} />
                     </Field>
-                    {user && (
-                      <Field id="co-cpf" label="CPF" error={errorOf('cpf') || (formData.cpf && !isValidCPF(formData.cpf) ? 'Esse CPF não é válido.' : undefined)}>
-                        <input {...field('cpf')} type="text" inputMode="numeric" placeholder="000.000.000-00" value={formData.cpf} onChange={e => handleCpfChange(e.target.value)} />
-                      </Field>
-                    )}
                   </div>
 
-                  {/* Endereço (só com conta) */}
-                  {user && (
-                    <fieldset className="flex flex-col gap-4">
-                      <legend className="mb-4 flex items-center gap-3 text-xs font-semibold uppercase leading-4 tracking-[0.2em] text-zinc-600">
-                        <span aria-hidden="true" className="h-px w-6 bg-amber-500" />
-                        Endereço de entrega
-                      </legend>
-                      <div className="grid grid-cols-6 gap-4">
-                        <Field id="co-cep" label="CEP" error={errorOf('cep')} help={isLoadingCep ? 'Buscando endereço…' : undefined} className="col-span-6 sm:col-span-2">
-                          <input {...field('cep')} type="text" inputMode="numeric" autoComplete="postal-code" maxLength={9} placeholder="00000-000" value={formData.cep} onChange={e => handleCepChange(e.target.value)} />
-                        </Field>
-                        <Field id="co-street" label="Rua" error={errorOf('street')} className="col-span-6 sm:col-span-4">
-                          <input {...field('street')} type="text" autoComplete="address-line1" value={formData.street} onChange={e => setFormData({ ...formData, street: e.target.value })} />
-                        </Field>
-                        <Field id="co-number" label="Número" error={errorOf('number')} className="col-span-2">
-                          <input {...field('number')} type="text" inputMode="numeric" value={formData.number} onChange={e => setFormData({ ...formData, number: e.target.value })} />
-                        </Field>
-                        <Field id="co-complement" label="Complemento" optional className="col-span-4">
-                          <input {...field('complement')} type="text" autoComplete="address-line2" placeholder="Apto, bloco…" value={formData.complement} onChange={e => setFormData({ ...formData, complement: e.target.value })} />
-                        </Field>
-                        <Field id="co-neighborhood" label="Bairro" optional className="col-span-6 sm:col-span-2">
-                          <input {...field('neighborhood')} type="text" value={formData.neighborhood} onChange={e => setFormData({ ...formData, neighborhood: e.target.value })} />
-                        </Field>
-                        <Field id="co-city" label="Cidade" error={errorOf('city')} className="col-span-4 sm:col-span-3">
-                          <input {...field('city')} type="text" autoComplete="address-level2" value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} />
-                        </Field>
-                        <Field id="co-state" label="UF" error={errorOf('state')} className="col-span-2 sm:col-span-1">
-                          <input {...field('state')} type="text" autoComplete="address-level1" maxLength={2} value={formData.state} onChange={e => setFormData({ ...formData, state: e.target.value.toUpperCase() })} />
-                        </Field>
-                      </div>
-                    </fieldset>
-                  )}
-
-                  {/* Resumo */}
                   <dl className="flex items-end justify-between gap-4 border-t border-zinc-200 pt-6">
                     <div>
                       <dt className="text-sm leading-5 text-zinc-600">{itemCount} {itemCount === 1 ? 'item' : 'itens'}</dt>
-                      <dd className="text-sm leading-5 text-zinc-600">Pagamento e entrega combinados no WhatsApp</dd>
+                      <dd className="text-sm leading-5 text-zinc-600">Pagamento por Pix</dd>
                     </div>
                     <div className="text-right">
                       <dt className="text-xs font-semibold uppercase leading-4 tracking-[0.16em] text-zinc-600">Total</dt>
@@ -595,28 +637,123 @@ export const CheckoutModal: React.FC = () => {
                   </dl>
 
                   <div className="flex flex-col gap-3">
-                    <ButtonWithIcon type="submit" icon={isProcessing ? Loader2 : MessageCircle} disabled={isProcessing} className="w-full">
-                      {isProcessing ? 'Registrando pedido…' : isAdmin ? 'Salvar venda direta' : 'Enviar pedido pelo WhatsApp'}
+                    <ButtonWithIcon type="submit" icon={isProcessing ? Loader2 : QrCode} disabled={isProcessing} className="w-full">
+                      {isProcessing ? 'Gerando o Pix…' : 'Gerar Pix para pagar'}
                     </ButtonWithIcon>
-                    {!isAdmin && (
-                      <p className="text-center text-sm leading-5 text-zinc-600">
-                        O pedido fica salvo e o WhatsApp da SunLab abre com tudo escrito.
-                      </p>
+                    {isAdmin && (
+                      <ButtonWithIcon variant="outline" icon={Check} disabled={isProcessing} onClick={() => handleCompleteOrder(undefined, 'admin_direct')} className="w-full">
+                        Salvar venda direta, sem Pix
+                      </ButtonWithIcon>
                     )}
+                    <p className="text-center text-sm leading-5 text-zinc-600">
+                      Na próxima tela aparecem o QR Code e o Pix Copia e Cola no valor exato.
+                    </p>
                   </div>
                 </form>
-              ) : (
-                /* Pedido registrado */
+              )}
+
+              {/* 2. Pagamento por Pix */}
+              {step === 'payment' && (
+                <div className="flex flex-col gap-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p role="status" className="inline-flex items-center gap-2 text-sm font-medium leading-5 text-amber-900">
+                      <span aria-hidden="true" className="h-2 w-2 rounded-full bg-amber-500" />
+                      Aguardando pagamento
+                    </p>
+                    <p className="inline-flex items-center gap-2 rounded-full bg-[#F6F1E7] px-3 py-1 text-sm leading-5 text-zinc-800">
+                      <Clock aria-hidden="true" className="h-4 w-4 text-amber-700" />
+                      Vale por <span className="font-mono font-semibold tabular-nums">{formatTimer(timeLeft)}</span>
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-4 rounded-3xl bg-[#F6F1E7] p-6 text-center">
+                    <div className="grid h-52 w-52 place-items-center rounded-2xl bg-white p-3 ring-1 ring-inset ring-black/8">
+                      {isGeneratingPix || !pixQrCodeUrl ? (
+                        <span className="flex flex-col items-center gap-2 text-sm leading-5 text-zinc-600">
+                          <Loader2 aria-hidden="true" className="h-6 w-6 animate-spin text-[#0A2540] motion-reduce:animate-none" />
+                          Gerando QR Code…
+                        </span>
+                      ) : (
+                        <img src={pixQrCodeUrl} alt={`QR Code Pix de ${brl(payableAmount)} para a SunLab`} className="h-full w-full select-none object-contain" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-sm leading-5 text-zinc-600">Valor exato</p>
+                      <p className="font-display text-[40px] font-light leading-[44px] tabular-nums text-[#0A2540]">{brl(payableAmount)}</p>
+                    </div>
+                  </div>
+
+                  {pixPayload && (
+                    <div className="flex flex-col gap-2">
+                      <label htmlFor="co-pix" className="text-sm font-medium leading-5 text-zinc-800">Pix Copia e Cola</label>
+                      <textarea
+                        id="co-pix"
+                        readOnly
+                        rows={3}
+                        value={pixPayload}
+                        onFocus={e => e.currentTarget.select()}
+                        className="w-full resize-none rounded-2xl bg-white px-4 py-3 font-mono text-xs leading-5 text-zinc-700 ring-1 ring-inset ring-zinc-300 outline-none focus:ring-2 focus:ring-[#0A2540]"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <ButtonWithIcon variant="dark" icon={copiedPix ? Check : Copy} onClick={copyPixCode} className="w-full sm:w-auto">
+                      {copiedPix ? 'Código copiado' : 'Copiar código Pix'}
+                    </ButtonWithIcon>
+                    <ButtonWithIcon variant="outline" icon={copiedPixKey ? Check : Key} onClick={copyDirectPixKey} className="w-full sm:w-auto">
+                      {copiedPixKey ? 'Chave copiada' : 'Copiar chave Pix'}
+                    </ButtonWithIcon>
+                  </div>
+                  <p aria-live="polite" className="sr-only">
+                    {copiedPix ? 'Código Pix copiado.' : copiedPixKey ? 'Chave Pix copiada.' : ''}
+                  </p>
+
+                  <dl className="flex flex-col gap-2 border-y border-zinc-200 py-4 text-sm leading-5">
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-zinc-600">Chave Pix</dt>
+                      <dd className="font-mono font-semibold text-zinc-900">{formatFriendlyKey(pixConfig.key)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-zinc-600">Favorecido</dt>
+                      <dd className="text-right font-medium text-zinc-900">{pixConfig.merchantName}</dd>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-zinc-600">Cidade</dt>
+                      <dd className="text-right text-zinc-900">{pixConfig.merchantCity}</dd>
+                    </div>
+                  </dl>
+
+                  <p className="text-base leading-6 text-zinc-600">
+                    Seu pedido já está registrado. Assim que o Pix cair na conta, confirmamos e falamos com você pelo telefone informado.
+                  </p>
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                    <ButtonWithIcon to="/orders" variant="outline" icon={Package} onClick={handleCloseModal}>
+                      Meus pedidos
+                    </ButtonWithIcon>
+                    <a
+                      href={whatsappOrderUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-10 items-center gap-2 text-sm font-semibold text-[#0A2540] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[#0A2540]"
+                    >
+                      <MessageCircle aria-hidden="true" className="h-4 w-4" />
+                      Mandar o comprovante no WhatsApp
+                      <span className="sr-only">(abre em nova aba)</span>
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. Venda direta salva (admin) */}
+              {step === 'success' && (
                 <div className="flex flex-col gap-6">
                   <div role="status" className="flex items-start gap-4">
                     <span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-800">
                       <Check className="h-6 w-6" />
                     </span>
-                    <p className="text-base leading-6 text-zinc-600">
-                      {isAdmin
-                        ? 'A venda foi salva.'
-                        : 'Abrimos o WhatsApp da SunLab com o pedido escrito. É só enviar a mensagem para combinar pagamento e entrega.'}
-                    </p>
+                    <p className="text-base leading-6 text-zinc-600">A venda foi salva e já entrou como em produção.</p>
                   </div>
 
                   {completedOrderData && (
@@ -637,12 +774,8 @@ export const CheckoutModal: React.FC = () => {
                       </ul>
                       <dl className="mt-3 flex flex-col gap-2 border-t border-zinc-300/60 pt-4 text-sm leading-5">
                         <div className="flex justify-between gap-4">
-                          <dt className="text-zinc-600">Para</dt>
+                          <dt className="text-zinc-600">Cliente</dt>
                           <dd className="text-right font-medium text-zinc-900">{completedOrderData.customerName}</dd>
-                        </div>
-                        <div className="flex justify-between gap-4">
-                          <dt className="text-zinc-600">Entrega</dt>
-                          <dd className="text-right font-medium text-zinc-900">{completedOrderData.shippingAddress}</dd>
                         </div>
                         <div className="flex items-end justify-between gap-4 pt-2">
                           <dt className="font-semibold text-zinc-900">Total</dt>
@@ -652,38 +785,17 @@ export const CheckoutModal: React.FC = () => {
                     </div>
                   )}
 
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    {!isAdmin && completedOrderData && (
-                      <ButtonWithIcon
-                        href={`https://wa.me/5513996061681?text=${encodeURIComponent(generateWhatsAppMessage(completedOrderData))}`}
-                        variant="dark"
-                        icon={MessageCircle}
-                      >
-                        Abrir o WhatsApp
-                      </ButtonWithIcon>
-                    )}
-                    <ButtonWithIcon to="/orders" variant="outline" icon={Package} onClick={handleCloseModal}>
-                      Meus pedidos
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                    <ButtonWithIcon to="/orders" variant="dark" icon={Package} onClick={handleCloseModal}>
+                      Ver pedidos
                     </ButtonWithIcon>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                    {!isAdmin && (
-                      <button
-                        type="button"
-                        onClick={copyWhatsAppDetails}
-                        className="inline-flex h-10 items-center gap-2 text-sm font-semibold text-[#0A2540] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
-                      >
-                        {copiedWhatsAppText ? <Check aria-hidden="true" className="h-4 w-4 text-emerald-700" /> : <Copy aria-hidden="true" className="h-4 w-4" />}
-                        <span aria-live="polite">{copiedWhatsAppText ? 'Texto copiado' : 'Copiar texto do pedido'}</span>
-                      </button>
-                    )}
                     <button
                       type="button"
-                      onClick={handleCloseModal}
-                      className="inline-flex h-10 items-center text-sm font-semibold text-zinc-600 underline-offset-4 hover:text-[#0A2540] hover:underline focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
+                      onClick={copyWhatsAppDetails}
+                      className="inline-flex h-10 items-center gap-2 text-sm font-semibold text-[#0A2540] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[#0A2540] cursor-pointer"
                     >
-                      Voltar para a loja
+                      {copiedWhatsAppText ? <Check aria-hidden="true" className="h-4 w-4 text-emerald-700" /> : <Copy aria-hidden="true" className="h-4 w-4" />}
+                      <span aria-live="polite">{copiedWhatsAppText ? 'Texto copiado' : 'Copiar texto do pedido'}</span>
                     </button>
                   </div>
                 </div>
@@ -710,7 +822,7 @@ const Field: React.FC<{ id: string; label: string; optional?: boolean; error?: s
       {label} {optional && <span className="font-normal text-zinc-600">(opcional)</span>}
     </label>
     {children}
-    {help && !error && <p className="text-sm leading-5 text-zinc-600" aria-live="polite">{help}</p>}
+    {help && !error && <p className="text-sm leading-5 text-zinc-600">{help}</p>}
     {error && <p id={`${id}-error`} className="text-sm leading-5 text-rose-700">{error}</p>}
   </div>
 );

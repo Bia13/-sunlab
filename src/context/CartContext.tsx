@@ -69,7 +69,6 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
-  const [couponDiscountPercent, setCouponDiscountPercent] = useState<number>(0);
   const [isFreeShippingCoupon, setIsFreeShippingCoupon] = useState<boolean>(false);
 
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -230,40 +229,22 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const clearCart = () => {
     setCart([]);
     setAppliedCoupon(null);
-    setCouponDiscountPercent(0);
     setIsFreeShippingCoupon(false);
   };
 
-  const applyCoupon = (code: string) => {
-    const cleanCode = code.trim().toUpperCase();
-    if (cleanCode === 'SUNLAB10' || cleanCode === 'PRINTIVA10') {
-      setAppliedCoupon('SUNLAB10');
-      setCouponDiscountPercent(0.10);
-      setIsFreeShippingCoupon(false);
-      return { success: true, message: 'Cupom de 10% de desconto aplicado com sucesso!' };
-    }
-    if (cleanCode === 'SUNLAB20' || cleanCode === 'PRINTIVA20') {
-      setAppliedCoupon('SUNLAB20');
-      setCouponDiscountPercent(0.20);
-      setIsFreeShippingCoupon(false);
-      return { success: true, message: 'Cupom de 20% especial aplicado com sucesso!' };
-    }
-    if (cleanCode === 'FRETEGRATIS') {
-      setAppliedCoupon('FRETEGRATIS');
-      setIsFreeShippingCoupon(true);
-      return { success: true, message: 'Cupom aplicado com sucesso!' };
-    }
-    return { success: false, message: 'Cupom inválido ou expirado. Tente SUNLAB10' };
+  const applyCoupon = (_code: string) => {
+    setAppliedCoupon(null);
+    setIsFreeShippingCoupon(false);
+    return { success: false, message: 'Cupons de desconto desativados.' };
   };
 
   const removeCoupon = () => {
     setAppliedCoupon(null);
-    setCouponDiscountPercent(0);
     setIsFreeShippingCoupon(false);
   };
 
   const subtotal = cart.reduce((acc, item) => acc + item.unitPrice * item.quantity, 0);
-  const discount = subtotal * couponDiscountPercent;
+  const discount = 0;
   
   const rawShipping = subtotal === 0
     ? 0
