@@ -47,11 +47,18 @@ export const Home: React.FC = () => {
   // Featured Showcase State
   const [selectedShowcase] = useState(SHOWCASE_ITEMS[0]);
 
-  const filteredProducts = products.filter(p => {
-    if (activeTab === 'bestsellers') return p.bestseller;
-    if (activeTab === 'newArrivals') return p.newArrival;
-    return p.featured;
-  }).slice(0, 8);
+  const filteredProducts = products
+    .filter(p => {
+      if (activeTab === 'bestsellers') return p.bestseller;
+      if (activeTab === 'newArrivals') return p.newArrival;
+      return true;
+    })
+    .sort((a, b) => {
+      if (activeTab === 'featured') {
+        return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
+      }
+      return 0;
+    });
 
   return (
     <div className="w-full flex flex-col space-y-16 sm:space-y-24 pb-20 overflow-hidden">

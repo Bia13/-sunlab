@@ -51,6 +51,16 @@ const getStoredEdits = (): Record<string, Partial<Product>> => {
 
 export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [products, setProducts] = useState<Product[]>(() => {
+    if (isSupabaseConfigured()) {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(CUSTOM_PRODUCTS_KEY);
+        localStorage.removeItem(DELETED_PRODUCTS_KEY);
+        localStorage.removeItem(EDITS_KEY);
+      } catch (_) {}
+      return [];
+    }
+
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       const custom = getStoredCustomProducts();
@@ -65,8 +75,6 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
       if (!base.length) {
-        // Se o Supabase está configurado, aguarda os dados reais da nuvem sem exibir o catálogo antigo
-        if (isSupabaseConfigured()) return custom.filter(p => !deleted.includes(p.id));
         base = FALLBACK_PRODUCTS;
       }
 
@@ -86,13 +94,14 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
       return Array.from(map.values());
     } catch (_) {}
-    return isSupabaseConfigured() ? [] : FALLBACK_PRODUCTS;
+    return FALLBACK_PRODUCTS;
   });
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const persistProducts = (updated: Product[]) => {
     setProducts(updated);
+    if (isSupabaseConfigured()) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     } catch (_) {}
@@ -190,32 +199,38 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
       slug: productData.slug || (productData.name ? productData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : id),
       price: Number(productData.price || 0),
       inStock: productData.inStock !== false,
-      featured: Boolean(productData.featured)
+      featured: productData.featured !== undefined ? Boolean(productData.featured) : true
     };
 
-    // 1. Salvar na lista de produtos customizados para nunca sumir
-    try {
-      const custom = getStoredCustomProducts();
-      const updatedCustom = [fullProduct, ...custom.filter(p => p.id !== id)];
-      localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(updatedCustom));
+    const useSupabase = isSupabaseConfigured();
 
-      // Se estava na lista de deletados, remover
-      const deleted = getStoredDeletedIds().filter(delId => delId !== id);
-      localStorage.setItem(DELETED_PRODUCTS_KEY, JSON.stringify(deleted));
-    } catch (_) {}
+    // 1. Em modo local, salvar na lista de produtos customizados para nunca sumir
+    if (!useSupabase) {
+      try {
+        const custom = getStoredCustomProducts();
+        const updatedCustom = [fullProduct, ...custom.filter(p => p.id !== id)];
+        localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(updatedCustom));
+
+        // Se estava na lista de deletados, remover
+        const deleted = getStoredDeletedIds().filter(delId => delId !== id);
+        localStorage.setItem(DELETED_PRODUCTS_KEY, JSON.stringify(deleted));
+      } catch (_) {}
+    }
 
     // 2. Atualização imediata no estado da aplicação e catálogo
     setProducts(prev => {
       const updated = [fullProduct, ...prev.filter(p => p.id !== id)];
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (_) {}
+      if (!useSupabase) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+        } catch (_) {}
+      }
       return updated;
     });
 
     // 3. Sincronizar com Supabase se configurado
-    if (isSupabaseConfigured()) {
-      upsertSupabaseProduct(fullProduct).catch(() => {});
+    if (useSupabase) {
+      await upsertSupabaseProduct(fullProduct).catch(() => {});
     }
 
     // 4. Sincronizar com o backend local / Vercel
@@ -236,24 +251,39 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateProduct = async (id: string, productData: Partial<Product>) => {
-    // 1. Salvar no Supabase se configurado
-    if (isSupabaseConfigured()) {
-      upsertSupabaseProduct({ ...productData, id }).catch(() => {});
-    }
-    // Salvar edição persistente
-    try {
-      const edits = getStoredEdits();
-      edits[id] = { ...(edits[id] || {}), ...productData };
-      localStorage.setItem(EDITS_KEY, JSON.stringify(edits));
+    const useSupabase = isSupabaseConfigured();
+    const existing = products.find(p => p.id === id);
+    const mergedForSupabase: Partial<Product> = existing
+      ? {
+          ...existing,
+          ...productData,
+          id,
+          price: productData.price !== undefined ? Number(productData.price) : existing.price,
+          originalPrice: productData.originalPrice !== undefined
+            ? (productData.originalPrice ? Number(productData.originalPrice) : undefined)
+            : existing.originalPrice
+        }
+      : { ...productData, id };
 
-      // Se for produto customizado, atualizar direto nele
-      const custom = getStoredCustomProducts();
-      const customIdx = custom.findIndex(p => p.id === id);
-      if (customIdx >= 0) {
-        custom[customIdx] = { ...custom[customIdx], ...productData } as Product;
-        localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(custom));
-      }
-    } catch (_) {}
+    // 1. Salvar no Supabase se configurado
+    if (useSupabase) {
+      await upsertSupabaseProduct(mergedForSupabase).catch(() => {});
+    } else {
+      // Salvar edição persistente em modo local
+      try {
+        const edits = getStoredEdits();
+        edits[id] = { ...(edits[id] || {}), ...productData };
+        localStorage.setItem(EDITS_KEY, JSON.stringify(edits));
+
+        // Se for produto customizado, atualizar direto nele
+        const custom = getStoredCustomProducts();
+        const customIdx = custom.findIndex(p => p.id === id);
+        if (customIdx >= 0) {
+          custom[customIdx] = { ...custom[customIdx], ...productData } as Product;
+          localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(custom));
+        }
+      } catch (_) {}
+    }
 
     let updatedProd: Product | undefined;
     setProducts(prev => {
@@ -270,9 +300,11 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         return p;
       });
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (_) {}
+      if (!useSupabase) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+        } catch (_) {}
+      }
       return updated;
     });
 
@@ -292,28 +324,34 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const deleteProduct = async (id: string) => {
-    // 1. Remover da lista customizada
-    try {
-      const custom = getStoredCustomProducts().filter(p => p.id !== id);
-      localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(custom));
+    const useSupabase = isSupabaseConfigured();
 
-      // 2. Adicionar aos deletados para nunca reaparecer após fetch da API
-      const deleted = Array.from(new Set([...getStoredDeletedIds(), id]));
-      localStorage.setItem(DELETED_PRODUCTS_KEY, JSON.stringify(deleted));
-    } catch (_) {}
+    // 1. Em modo local, remover da lista customizada e registrar em deletados
+    if (!useSupabase) {
+      try {
+        const custom = getStoredCustomProducts().filter(p => p.id !== id);
+        localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(custom));
+
+        // 2. Adicionar aos deletados para nunca reaparecer após fetch da API
+        const deleted = Array.from(new Set([...getStoredDeletedIds(), id]));
+        localStorage.setItem(DELETED_PRODUCTS_KEY, JSON.stringify(deleted));
+      } catch (_) {}
+    }
 
     // 3. Remover do catálogo
     setProducts(prev => {
       const updated = prev.filter(p => p.id !== id);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (_) {}
+      if (!useSupabase) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+        } catch (_) {}
+      }
       return updated;
     });
 
     // 4. Remover do Supabase se configurado
-    if (isSupabaseConfigured()) {
-      deleteSupabaseProduct(id).catch(() => {});
+    if (useSupabase) {
+      await deleteSupabaseProduct(id).catch(() => {});
     }
 
     try {
@@ -327,39 +365,52 @@ export const ProductProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const toggleProductField = async (id: string, field: 'in_stock' | 'featured' | 'bestseller' | 'new_arrival') => {
+    const useSupabase = isSupabaseConfigured();
     const camelField = field === 'in_stock' ? 'inStock' :
                        field === 'new_arrival' ? 'newArrival' : field;
 
-    let targetValue: boolean = false;
+    const existing = products.find(p => p.id === id);
+    const targetValue = existing ? !existing[camelField as keyof Product] : false;
+
     setProducts(prev => {
       const updated = prev.map(p => {
         if (p.id === id) {
-          targetValue = !p[camelField as keyof Product];
           return {
             ...p,
-            [camelField]: targetValue
+            [camelField]: !p[camelField as keyof Product]
           } as Product;
         }
         return p;
       });
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (_) {}
+      if (!useSupabase) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+        } catch (_) {}
+      }
       return updated;
     });
 
-    try {
-      const edits = getStoredEdits();
-      edits[id] = { ...(edits[id] || {}), [camelField]: targetValue };
-      localStorage.setItem(EDITS_KEY, JSON.stringify(edits));
-
-      const custom = getStoredCustomProducts();
-      const customIdx = custom.findIndex(p => p.id === id);
-      if (customIdx >= 0) {
-        (custom[customIdx] as any)[camelField] = targetValue;
-        localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(custom));
+    if (useSupabase) {
+      if (existing) {
+        await upsertSupabaseProduct({
+          ...existing,
+          [camelField]: targetValue
+        }).catch(() => {});
       }
-    } catch (_) {}
+    } else {
+      try {
+        const edits = getStoredEdits();
+        edits[id] = { ...(edits[id] || {}), [camelField]: targetValue };
+        localStorage.setItem(EDITS_KEY, JSON.stringify(edits));
+
+        const custom = getStoredCustomProducts();
+        const customIdx = custom.findIndex(p => p.id === id);
+        if (customIdx >= 0) {
+          (custom[customIdx] as any)[camelField] = targetValue;
+          localStorage.setItem(CUSTOM_PRODUCTS_KEY, JSON.stringify(custom));
+        }
+      } catch (_) {}
+    }
 
     try {
       await fetch(`/api/products/${id}/toggle`, {
